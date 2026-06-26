@@ -1,7 +1,7 @@
 Package: ggchangepoint
 Type: Package
 Title: Combines Changepoint Analysis with 'ggplot2'
-Version: 0.2.0
+Version: 0.3.0
 Authors@R: 
     c(person(given = "Youzhi",
              family = "Yu",
@@ -12,15 +12,15 @@ Description: R provides fantastic tools for changepoint
     not have the 'ggplot2' style. This tool, however, 
     combines 'changepoint', 'changepoint.np' and 'ecp'
     together, and uses 'ggplot2' to visualize changepoints.
-    Version 0.2.0 adds a unified 'ggcpt' S3 result class,
+    It provides a unified 'ggcpt' S3 result class,
     'broom'-style tidy/glance/augment methods, 'autoplot()',
-    new geoms ('geom_changepoint()', 'geom_cpt_segment()',
+    composable geoms ('geom_changepoint()', 'geom_cpt_segment()',
     'geom_cpt_ci()', 'stat_changepoint()'), a unified
-    'cpt_detect()' dispatcher, first-wave wrappers for
-    WBS/WBS2, NOT, MOSUM, FPOP, a method comparison module,
-    accuracy metrics, data simulation, canonical test signals,
-    and hardening of the existing functions (no-change bug fix,
-    'size' to 'linewidth' migration, 'match.arg()' validation).
+    'cpt_detect()' dispatcher with method introspection via
+    'cpt_methods()', wrappers for several optional engines
+    (WBS, WBS2, NOT, MOSUM, FPOP, Isolate-Detect, TGUH), a method
+    comparison module, accuracy metrics, data simulation, and
+    canonical test signals.
 License: GPL (>= 3)
 Encoding: UTF-8
 Imports: changepoint, changepoint.np, dplyr, ecp, generics, ggplot2 (>=
@@ -28,13 +28,13 @@ Imports: changepoint, changepoint.np, dplyr, ecp, generics, ggplot2 (>=
 RdMacros: Rdpack
 RoxygenNote: 7.3.2
 Suggests: rmarkdown, knitr, testthat (>= 3.0.0), wbs, breakfast, not,
-        mosum, fpop, IDetect, vdiffr, future, future.apply
+        mosum, fpop, IDetect, future, future.apply
 VignetteBuilder: knitr
 URL: https://pursuitofdatascience.github.io/ggchangepoint/
 BugReports: https://github.com/PursuitOfDataScience/ggchangepoint/issues
 NeedsCompilation: no
-Packaged: 2026-06-20 20:12:07 UTC; youzhi
+Packaged: 2026-06-25 16:17:29 UTC; youzhi
 Author: Youzhi Yu [aut, cre]
 Maintainer: Youzhi Yu <yuyouzhi666@icloud.com>
 Repository: CRAN
-Date/Publication: 2026-06-21 10:50:02 UTC
+Date/Publication: 2026-06-26 15:30:08 UTC

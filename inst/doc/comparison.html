@@ -394,8 +394,8 @@ maximised log-likelihood) and <span class="math inline">\(\beta
 f(m)\)</span> guards against over-segmentation <span class="citation">(Yao 1988)</span>. The choice of penalty <span class="math inline">\(\beta\)</span> is the central challenge of the
 field.</p>
 </div>
-<div id="taxonomy-of-methods-in-v0.2.0" class="section level2">
-<h2>Taxonomy of methods in v0.2.0</h2>
+<div id="taxonomy-of-methods" class="section level2">
+<h2>Taxonomy of methods</h2>
 <p>The methods available through <code>cpt_detect()</code> in this
 release fall into three broad families:</p>
 <table style="width:100%;">
@@ -531,34 +531,37 @@ a tolerance margin of 5 observations.</p>
 <span id="cb7-26"><a href="#cb7-26" tabindex="-1"></a><span class="co">#&gt; Warning in BINSEG(sumstat, pen = pen.value, cost_func = costfunc, minseglen =</span></span>
 <span id="cb7-27"><a href="#cb7-27" tabindex="-1"></a><span class="co">#&gt; minseglen, : The number of changepoints identified is Q, it is advised to</span></span>
 <span id="cb7-28"><a href="#cb7-28" tabindex="-1"></a><span class="co">#&gt; increase Q to make sure changepoints have not been missed.</span></span>
-<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a>results[, <span class="fu">c</span>(<span class="st">&quot;signal&quot;</span>, <span class="st">&quot;method&quot;</span>, <span class="st">&quot;precision&quot;</span>, <span class="st">&quot;recall&quot;</span>, <span class="st">&quot;f1&quot;</span>, <span class="st">&quot;covering&quot;</span>,</span>
-<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a>            <span class="st">&quot;hausdorff&quot;</span>)]</span>
-<span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a><span class="co">#&gt;    signal method precision     recall        f1  covering hausdorff</span></span>
-<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a><span class="co">#&gt; 1  blocks   pelt 1.0000000 0.09090909 0.1666667 0.2378708       363</span></span>
-<span id="cb7-33"><a href="#cb7-33" tabindex="-1"></a><span class="co">#&gt; 2  blocks binseg 1.0000000 0.09090909 0.1666667 0.2378708       363</span></span>
-<span id="cb7-34"><a href="#cb7-34" tabindex="-1"></a><span class="co">#&gt; 3  blocks   fpop 1.0000000 0.09090909 0.1666667 0.2378708       363</span></span>
-<span id="cb7-35"><a href="#cb7-35" tabindex="-1"></a><span class="co">#&gt; 4  blocks    wbs 1.0000000 0.09090909 0.1666667 0.2378708       363</span></span>
-<span id="cb7-36"><a href="#cb7-36" tabindex="-1"></a><span class="co">#&gt; 5  blocks    not 1.0000000 0.09090909 0.1666667 0.2378708       363</span></span>
-<span id="cb7-37"><a href="#cb7-37" tabindex="-1"></a><span class="co">#&gt; 6     fms   pelt 1.0000000 0.28571429 0.4444444 0.3773701       179</span></span>
-<span id="cb7-38"><a href="#cb7-38" tabindex="-1"></a><span class="co">#&gt; 7     fms binseg 0.7500000 0.42857143 0.5454545 0.6386754       172</span></span>
-<span id="cb7-39"><a href="#cb7-39" tabindex="-1"></a><span class="co">#&gt; 8     fms   fpop 1.0000000 0.85714286 0.9230769 0.8626271        51</span></span>
-<span id="cb7-40"><a href="#cb7-40" tabindex="-1"></a><span class="co">#&gt; 9     fms    wbs 1.0000000 1.00000000 1.0000000 0.9519373         5</span></span>
-<span id="cb7-41"><a href="#cb7-41" tabindex="-1"></a><span class="co">#&gt; 10    fms    not 1.0000000 1.00000000 1.0000000 0.9632035         4</span></span>
-<span id="cb7-42"><a href="#cb7-42" tabindex="-1"></a><span class="co">#&gt; 11    mix   pelt 0.0000000 0.00000000 0.0000000 0.4667797        55</span></span>
-<span id="cb7-43"><a href="#cb7-43" tabindex="-1"></a><span class="co">#&gt; 12    mix binseg 0.0000000 0.00000000 0.0000000 0.3929160        59</span></span>
-<span id="cb7-44"><a href="#cb7-44" tabindex="-1"></a><span class="co">#&gt; 13    mix   fpop 0.0000000 0.00000000 0.0000000 0.4667797        55</span></span>
-<span id="cb7-45"><a href="#cb7-45" tabindex="-1"></a><span class="co">#&gt; 14    mix    wbs 0.1111111 0.20000000 0.1428571 0.5560015        77</span></span>
-<span id="cb7-46"><a href="#cb7-46" tabindex="-1"></a><span class="co">#&gt; 15    mix    not 0.1000000 0.20000000 0.1333333 0.5355308        77</span></span>
-<span id="cb7-47"><a href="#cb7-47" tabindex="-1"></a><span class="co">#&gt; 16  teeth   pelt 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-48"><a href="#cb7-48" tabindex="-1"></a><span class="co">#&gt; 17  teeth binseg 1.0000000 1.00000000 1.0000000 0.9961131         1</span></span>
-<span id="cb7-49"><a href="#cb7-49" tabindex="-1"></a><span class="co">#&gt; 18  teeth   fpop 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-50"><a href="#cb7-50" tabindex="-1"></a><span class="co">#&gt; 19  teeth    wbs 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-51"><a href="#cb7-51" tabindex="-1"></a><span class="co">#&gt; 20  teeth    not 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-52"><a href="#cb7-52" tabindex="-1"></a><span class="co">#&gt; 21 stairs   pelt 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-53"><a href="#cb7-53" tabindex="-1"></a><span class="co">#&gt; 22 stairs binseg 1.0000000 0.55555556 0.7142857 0.5991635        51</span></span>
-<span id="cb7-54"><a href="#cb7-54" tabindex="-1"></a><span class="co">#&gt; 23 stairs   fpop 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span>
-<span id="cb7-55"><a href="#cb7-55" tabindex="-1"></a><span class="co">#&gt; 24 stairs    wbs 1.0000000 1.00000000 1.0000000 0.9961313         1</span></span>
-<span id="cb7-56"><a href="#cb7-56" tabindex="-1"></a><span class="co">#&gt; 25 stairs    not 1.0000000 1.00000000 1.0000000 1.0000000         0</span></span></code></pre></div>
+<span id="cb7-29"><a href="#cb7-29" tabindex="-1"></a><span class="co">#&gt; Warning in BINSEG(sumstat, pen = pen.value, cost_func = costfunc, minseglen =</span></span>
+<span id="cb7-30"><a href="#cb7-30" tabindex="-1"></a><span class="co">#&gt; minseglen, : The number of changepoints identified is Q, it is advised to</span></span>
+<span id="cb7-31"><a href="#cb7-31" tabindex="-1"></a><span class="co">#&gt; increase Q to make sure changepoints have not been missed.</span></span>
+<span id="cb7-32"><a href="#cb7-32" tabindex="-1"></a>results[, <span class="fu">c</span>(<span class="st">&quot;signal&quot;</span>, <span class="st">&quot;method&quot;</span>, <span class="st">&quot;precision&quot;</span>, <span class="st">&quot;recall&quot;</span>, <span class="st">&quot;f1&quot;</span>, <span class="st">&quot;covering&quot;</span>,</span>
+<span id="cb7-33"><a href="#cb7-33" tabindex="-1"></a>            <span class="st">&quot;hausdorff&quot;</span>)]</span>
+<span id="cb7-34"><a href="#cb7-34" tabindex="-1"></a><span class="co">#&gt;    signal method precision    recall        f1  covering hausdorff</span></span>
+<span id="cb7-35"><a href="#cb7-35" tabindex="-1"></a><span class="co">#&gt; 1  blocks   pelt 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-36"><a href="#cb7-36" tabindex="-1"></a><span class="co">#&gt; 2  blocks binseg 1.0000000 0.4545455 0.6250000 0.6310029        82</span></span>
+<span id="cb7-37"><a href="#cb7-37" tabindex="-1"></a><span class="co">#&gt; 3  blocks   fpop 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-38"><a href="#cb7-38" tabindex="-1"></a><span class="co">#&gt; 4  blocks    wbs 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-39"><a href="#cb7-39" tabindex="-1"></a><span class="co">#&gt; 5  blocks    not 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-40"><a href="#cb7-40" tabindex="-1"></a><span class="co">#&gt; 6     fms   pelt 1.0000000 0.2857143 0.4444444 0.3773701       179</span></span>
+<span id="cb7-41"><a href="#cb7-41" tabindex="-1"></a><span class="co">#&gt; 7     fms binseg 0.7500000 0.4285714 0.5454545 0.6386754       172</span></span>
+<span id="cb7-42"><a href="#cb7-42" tabindex="-1"></a><span class="co">#&gt; 8     fms   fpop 1.0000000 0.8571429 0.9230769 0.8626271        51</span></span>
+<span id="cb7-43"><a href="#cb7-43" tabindex="-1"></a><span class="co">#&gt; 9     fms    wbs 1.0000000 1.0000000 1.0000000 0.9519373         5</span></span>
+<span id="cb7-44"><a href="#cb7-44" tabindex="-1"></a><span class="co">#&gt; 10    fms    not 1.0000000 1.0000000 1.0000000 0.9632035         4</span></span>
+<span id="cb7-45"><a href="#cb7-45" tabindex="-1"></a><span class="co">#&gt; 11    mix   pelt 0.0000000 0.0000000 0.0000000 0.4667797        55</span></span>
+<span id="cb7-46"><a href="#cb7-46" tabindex="-1"></a><span class="co">#&gt; 12    mix binseg 0.0000000 0.0000000 0.0000000 0.3929160        59</span></span>
+<span id="cb7-47"><a href="#cb7-47" tabindex="-1"></a><span class="co">#&gt; 13    mix   fpop 0.0000000 0.0000000 0.0000000 0.4667797        55</span></span>
+<span id="cb7-48"><a href="#cb7-48" tabindex="-1"></a><span class="co">#&gt; 14    mix    wbs 0.1111111 0.2000000 0.1428571 0.5560015        77</span></span>
+<span id="cb7-49"><a href="#cb7-49" tabindex="-1"></a><span class="co">#&gt; 15    mix    not 0.1000000 0.2000000 0.1333333 0.5355308        77</span></span>
+<span id="cb7-50"><a href="#cb7-50" tabindex="-1"></a><span class="co">#&gt; 16  teeth   pelt 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-51"><a href="#cb7-51" tabindex="-1"></a><span class="co">#&gt; 17  teeth binseg 1.0000000 1.0000000 1.0000000 0.9961131         1</span></span>
+<span id="cb7-52"><a href="#cb7-52" tabindex="-1"></a><span class="co">#&gt; 18  teeth   fpop 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-53"><a href="#cb7-53" tabindex="-1"></a><span class="co">#&gt; 19  teeth    wbs 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-54"><a href="#cb7-54" tabindex="-1"></a><span class="co">#&gt; 20  teeth    not 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-55"><a href="#cb7-55" tabindex="-1"></a><span class="co">#&gt; 21 stairs   pelt 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-56"><a href="#cb7-56" tabindex="-1"></a><span class="co">#&gt; 22 stairs binseg 1.0000000 0.5555556 0.7142857 0.5991635        51</span></span>
+<span id="cb7-57"><a href="#cb7-57" tabindex="-1"></a><span class="co">#&gt; 23 stairs   fpop 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span>
+<span id="cb7-58"><a href="#cb7-58" tabindex="-1"></a><span class="co">#&gt; 24 stairs    wbs 1.0000000 1.0000000 1.0000000 0.9961313         1</span></span>
+<span id="cb7-59"><a href="#cb7-59" tabindex="-1"></a><span class="co">#&gt; 25 stairs    not 1.0000000 1.0000000 1.0000000 1.0000000         0</span></span></code></pre></div>
 <p>The table shows how different methods perform across signal types.
 PELT and FPOP, as exact methods, generally have strong performance,
 while WBS and NOT can detect small or short features that the exact
