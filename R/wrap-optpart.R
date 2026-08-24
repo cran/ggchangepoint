@@ -5,44 +5,33 @@
 #'
 #' @param x A numeric vector.
 #' @param penalty Penalty value. Defaults to \code{2 * log(length(x))} (BIC).
+#'   This is an \emph{absolute} penalty on the residual sum of squares, so
+#'   it is only calibrated for noise of standard deviation 1: on wider data
+#'   the default under-penalises badly and the segmentation shatters.
+#'   Standardise the series, or scale the penalty by the noise variance
+#'   (for example \code{2 * log(length(x)) * stats::var(diff(x)) / 2}).
+#'   See the scale-sensitivity section of \code{\link{cpt_detect}}. This
+#'   default differs from the one \code{\link{cpt_detect}} applies, which
+#'   resolves its \code{"MBIC"} default to a stronger numeric value, so the
+#'   two entry points need not agree unless \code{penalty} is given.
 #' @param ... Additional arguments passed to \code{fpop::Fpop()}.
 #' @return A \code{ggcpt} object.
 #' @export
 fpop_wrapper <- function(x, penalty = NULL, ...) {
 
-  if (!requireNamespace("fpop", quietly = TRUE)) {
-    stop("Package 'fpop' is required. ",
-         "Install it with install.packages('fpop').",
-         call. = FALSE)
-  }
-
+  need_pkg("fpop")
   validate_data(x)
-  data_vec <- as.numeric(x)
+  data_vec <- as_uni_vector(x, "fpop")
 
   if (is.null(penalty)) {
     penalty <- 2 * log(length(data_vec))
   }
 
   fit <- fpop::Fpop(data_vec, lambda = penalty, ...)
-  cp_indices <- sort(fit$t.est)
-  cp_indices <- cp_indices[cp_indices > 0 & cp_indices < length(data_vec)]
+  cp_indices <- as.integer(fit$t.est)
 
-  if (length(cp_indices) == 0) {
-    return(ggcpt_empty(data_vec, "fpop"))
-  }
-
-  changepoints <- tibble::tibble(
-    cp = cp_indices,
-    cp_value = data_vec[cp_indices]
-  )
-
-  segments <- build_segments(data_vec, cp_indices)
-  data_tbl <- tibble::tibble(index = seq_along(data_vec), value = data_vec)
-
-  new_ggcpt(
-    changepoints = changepoints,
-    segments = segments,
-    data = data_tbl,
+  ggcpt_build(
+    data_vec, cp_indices,
     method = "fpop",
     change_in = "mean",
     penalty = list(type = "Manual", value = penalty),
@@ -55,7 +44,7 @@ fpop_wrapper <- function(x, penalty = NULL, ...) {
 #' @noRd
 build_segments <- function(data_vec, cp_indices) {
   n <- length(data_vec)
-  starts <- c(1, cp_indices + 1)
+  starts <- c(1L, cp_indices + 1L)
   ends <- c(cp_indices, n)
   n_seg <- length(starts)
 
@@ -63,7 +52,7 @@ build_segments <- function(data_vec, cp_indices) {
     seg_id = seq_len(n_seg),
     start = starts,
     end = ends,
-    n = ends - starts + 1,
+    n = ends - starts + 1L,
     param_estimate = vapply(seq_len(n_seg), function(i) {
       mean(data_vec[starts[i]:ends[i]])
     }, numeric(1))
@@ -89,6 +78,6 @@ ggcpt_empty <- function(data_vec, method = "unknown") {
     change_in = "mean",
     penalty = list(type = NA_character_, value = NA_real_),
     fit = NULL,
-    call = match.call()
+    call = NULL
   )
 }

@@ -7,41 +7,94 @@
 cpt_detect(x, method = "pelt", change_in = "mean", penalty = "MBIC", ...)
 }
 \arguments{
-\item{x}{A numeric vector (the data series).}
+\item{x}{A numeric vector for univariate methods, or a numeric
+matrix/data frame (rows are time points) for the multivariate methods
+(\code{"ecp"}, \code{"inspect"}, \code{"geomcp"}, \code{"ocd"},
+\code{"npmojo"}, \code{"kcp"}, \code{"fastcpd"}).}
 
-\item{method}{Detection method. See \code{\link{cpt_methods}()} for the
-complete table. Methods available in this release:
-\code{"pelt"}, \code{"binseg"}, \code{"segneigh"}, \code{"amoc"},
-\code{"np"}, \code{"ecp"}, \code{"fpop"}, \code{"wbs"}, \code{"wbs2"},
-\code{"not"}, \code{"mosum"}, \code{"idetect"}, \code{"tguh"}.
-Methods that ship with optional (\code{Suggests}) engine packages will
-prompt you to install them if missing. Planned methods — \code{"smuce"},
-\code{"hsmuce"}, \code{"kcp"}, \code{"cpm"}, \code{"robust"},
-\code{"decafs"}, \code{"sn"}, \code{"inspect"}, \code{"sbs"},
-\code{"bcp"}, \code{"bocpd"}, \code{"strucchange"}, \code{"segmented"} —
-are listed in \code{cpt_methods()} with their target release.}
+\item{method}{Detection method. One of \code{"pelt"}, \code{"binseg"},
+\code{"segneigh"}, \code{"amoc"}, \code{"np"}, \code{"ecp"},
+\code{"fpop"}, \code{"wbs"}, \code{"wbs2"}, \code{"not"},
+\code{"mosum"}, \code{"idetect"}, \code{"tguh"}, \code{"smuce"},
+\code{"hsmuce"}, \code{"cpop"}, \code{"bcp"}, \code{"bocpd"},
+\code{"beast"}, \code{"cpm"}, \code{"kcp"}, \code{"npmojo"},
+\code{"decafs"}, \code{"sn"}, \code{"inspect"}, \code{"ocd"},
+\code{"geomcp"}, \code{"strucchange"}, \code{"segmented"},
+\code{"envcpt"}, or \code{"fastcpd"}. Methods whose engines live in
+\code{Suggests} prompt for installation when missing.}
 
 \item{change_in}{What to detect change in. One of \code{"mean"},
-\code{"var"}, \code{"meanvar"}, \code{"slope"}, \code{"distribution"}.
-Defaults to \code{"mean"}.}
+\code{"var"}, \code{"meanvar"}, \code{"slope"}, or
+\code{"distribution"}. Defaults to \code{"mean"}. The requested value
+is validated against the method's capabilities
+(see \code{cpt_methods()}); incompatible combinations error rather than
+silently running something else.}
 
 \item{penalty}{Penalty type or value. Either a character string
-(\code{"MBIC"}, \code{"BIC"}, \code{"AIC"}, \code{"Hannan-Quinn"})
-or a numeric penalty value. Defaults to \code{"MBIC"}. Numeric penalties
-are honoured by the functional-pruning method (\code{fpop});
-the \code{changepoint}-based methods expect one of the
-character options.}
+(\code{"MBIC"}, \code{"BIC"}, \code{"SIC"}, \code{"AIC"},
+\code{"Hannan-Quinn"}, \code{"None"}) or a numeric penalty value.
+Defaults to \code{"MBIC"}. See the penalty-semantics section of
+\code{\link{cpt_penalty}} for how each engine interprets it; methods
+that use thresholds, significance levels, or posteriors instead of
+penalties ignore this argument, and \code{"segneigh"} falls back to
+\code{"SIC"} because \pkg{changepoint} does not implement MBIC for
+Segment Neighbourhood. Note also that the default \code{"MBIC"} is
+resolved to a \emph{numeric} value for the numeric-penalty engines
+(\code{"fpop"}, \code{"cpop"}, \code{"decafs"}), and that value is
+stronger than those wrappers' own \code{2 * log(n)} default — 19.9
+against 11.8 at \eqn{n = 360} — so \code{cpt_detect(x, method =
+"decafs")} can report fewer changepoints than \code{decafs_wrapper(x)}
+on the same series. Pass \code{penalty} explicitly to make the two
+entry points agree.}
 
-\item{...}{Additional arguments passed to the specific wrapper.}
+\item{...}{Additional arguments passed to the specific wrapper (see the
+wrapper's help page for engine-specific options). Where an argument is
+also derived from \code{change_in} (\code{not}'s \code{contrast},
+\code{cpm}'s \code{cpm_type}, \code{kcp}'s \code{running_stat},
+\code{sn}'s \code{parameter}, \code{fastcpd}'s \code{family}), a value
+supplied here takes precedence. Check the spelling against the wrapper's
+help page: several engines end their own signature in \code{...}
+(\pkg{wbs}, \pkg{not}, \pkg{Rbeast}, \pkg{strucchange},
+\pkg{segmented}, \pkg{fastcpd}), so for those a misspelt argument name
+is silently discarded upstream and the engine quietly uses its default
+rather than reporting the typo.}
 }
 \value{
 A \code{ggcpt} object.
 }
 \description{
-Runs one or more changepoint detection methods on a sequence and returns
-a tidy \code{ggcpt} result object. This is the recommended entry point
-for most users.
+Runs a changepoint detection method on a sequence and returns a tidy
+\code{ggcpt} result object. This is the recommended entry point for most
+users. See \code{\link{cpt_methods}()} for the full method table with
+engines and capabilities.
 }
+\section{Scale sensitivity of the penalised change-in-mean engines}{
+
+\code{"pelt"}, \code{"binseg"}, \code{"segneigh"} and \code{"fpop"}
+compare a penalty against a \emph{raw} segment cost when
+\code{change_in = "mean"}: \pkg{changepoint}'s Normal cost assumes a
+noise standard deviation of 1, and \pkg{fpop}'s \code{lambda} is an
+absolute penalty on the residual sum of squares. Neither rescales the
+data, so on a series whose noise is much wider than 1 the penalty is
+effectively negligible and the segmentation shatters. On one true
+changepoint with a jump of five standard deviations, \code{"pelt"}
+returns 1 changepoint at \eqn{\sigma = 1}, 29 at \eqn{\sigma = 3} and
+138 at \eqn{\sigma = 10}. Three ways to avoid it, in order of
+convenience:
+\itemize{
+  \item standardise the series first
+    (\code{cpt_detect(scale(x)[, 1], method = "pelt")});
+  \item pass a penalty on the data's own scale, for example
+    \code{penalty = 2 * log(length(x)) * stats::var(diff(x)) / 2};
+  \item use \code{change_in = "meanvar"}, which estimates a variance per
+    segment and is unaffected.
+}
+The other engines are unaffected: SMUCE, WBS, WBS2, NOT, MOSUM,
+Isolate-Detect, TGUH, CPOP, DeCAFS and the Bayesian, nonparametric and
+multivariate methods all estimate or cancel the noise scale internally,
+and return the same segmentation whatever the units.
+}
+
 \examples{
 set.seed(2022)
 x <- c(rnorm(100, 0, 1), rnorm(100, 10, 1))

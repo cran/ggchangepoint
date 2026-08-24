@@ -4,10 +4,19 @@
 #' @param segments A tibble with segment information: \code{seg_id}, \code{start},
 #'   \code{end}, \code{n}, \code{param_estimate}.
 #' @param data A tibble with \code{index} and \code{value}.
-#' @param method Character. The detection method used.
-#' @param change_in Character. What was detected (e.g. "mean", "var", "meanvar").
+#' @param method Character. The detection method used. A length-one string;
+#'   defaults to \code{NA_character_}. (A zero-length value would make
+#'   \code{glance()} return zero rows instead of its documented single row,
+#'   because every other column would be recycled against it.)
+#' @param change_in Character. What was detected (e.g. "mean", "var",
+#'   "meanvar"). A length-one string; defaults to \code{NA_character_}.
 #' @param penalty A list with \code{type} and \code{value}.
-#' @param fit The raw upstream object.
+#' @param fit The raw upstream object. Every wrapper stores one except
+#'   \code{"ecp"}: \code{ecp::e.agglo()} returns a cluster-progression
+#'   matrix that is quadratic in the series length, so keeping it by
+#'   default would make the result object explode on a long series. Call
+#'   \code{ecp::e.divisive()} or \code{ecp::e.agglo()} directly if you
+#'   need it.
 #' @param call The matched call.
 #' @param cp_convention Character. The convention for reporting changepoint
 #'   locations: \code{"left"} (last index of left segment, used by
@@ -25,8 +34,8 @@ new_ggcpt <- function(changepoints = tibble::tibble(cp = integer(), cp_value = n
                                                   n = integer(),
                                                   param_estimate = numeric()),
                        data = tibble::tibble(index = integer(), value = numeric()),
-                       method = character(),
-                       change_in = character(),
+                       method = NA_character_,
+                       change_in = NA_character_,
                        penalty = list(type = NA_character_, value = NA_real_),
                        fit = NULL,
                        call = NULL,
@@ -49,6 +58,20 @@ new_ggcpt <- function(changepoints = tibble::tibble(cp = integer(), cp_value = n
   )
 }
 
+# Internal: render a penalty descriptor for printing. Numeric values are
+# rounded to something readable rather than shown at full double precision,
+# and a penalty that has no numeric value (a name, threshold type, or model
+# selector) prints as just its type instead of trailing " = NA".
+#' @noRd
+format_penalty <- function(penalty) {
+  if (!is.list(penalty)) return(as.character(penalty))
+  val <- penalty$value
+  if (length(val) != 1 || !is.numeric(val) || !is.finite(val)) {
+    return(as.character(penalty$type))
+  }
+  paste0(penalty$type, " = ", format(val, digits = 5))
+}
+
 #' Test if an object is a ggcpt object
 #'
 #' @param x An object to test.
@@ -69,19 +92,11 @@ print.ggcpt <- function(x, ...) {
   cat("  Change in:      ", x$change_in, "\n")
   cat("  Changepoints found:", nrow(x$changepoints), "\n")
   cat("  CP convention:  ", x$cp_convention, "\n")
-  penalty_str <- if (is.list(x$penalty)) {
-    paste0(x$penalty$type, " = ", x$penalty$value)
-  } else {
-    as.character(x$penalty)
-  }
-  cat("  Penalty:        ", penalty_str, "\n")
+  cat("  Penalty:        ", format_penalty(x$penalty), "\n")
   cat("  Series length:  ", nrow(x$data), "\n")
   if (nrow(x$changepoints) > 0) {
     cat("\nChangepoints:\n")
-    print(x$changepoints, n = min(nrow(x$changepoints), 10))
-    if (nrow(x$changepoints) > 10) {
-      cat("  ... ", nrow(x$changepoints) - 10, " more changepoint(s)\n")
-    }
+    print(x$changepoints, n = 10)
   } else {
     cat("\nNo changepoints detected.\n")
   }

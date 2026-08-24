@@ -1,4 +1,4 @@
-## ----include = FALSE----------------------------------------------------------
+## ----setup, include = FALSE---------------------------------------------------
 knitr::opts_chunk$set(
   collapse = TRUE,
   fig.width = 8,
@@ -6,155 +6,163 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE,
   comment = "#>",
-  fig.alt = "ggchangepoint plot of a time series with detected changepoints"
+  fig.alt = "ggchangepoint plot of a time series with its detected changepoints"
 )
-# The wrappers for the optional engines live in Suggests; gate the chunks that
-# need them so the vignette still builds when an engine is not installed.
-has_fpop <- requireNamespace("fpop", quietly = TRUE)
-has_wbs  <- requireNamespace("wbs", quietly = TRUE)
-has_not  <- requireNamespace("not", quietly = TRUE)
-
-## -----------------------------------------------------------------------------
 library(ggchangepoint)
 library(ggplot2)
-library(generics)
 theme_set(theme_light())
 
+# Optional (Suggests) engines: gate the chunks that need them so the
+# vignette builds on any installation.
+has_stepR       <- requireNamespace("stepR", quietly = TRUE)
+has_cpop        <- requireNamespace("cpop", quietly = TRUE)
+has_bcp         <- requireNamespace("bcp", quietly = TRUE)
+has_ocp         <- requireNamespace("ocp", quietly = TRUE)
+has_fpop        <- requireNamespace("fpop", quietly = TRUE)
+has_wbs         <- requireNamespace("wbs", quietly = TRUE)
+has_not         <- requireNamespace("not", quietly = TRUE)
+has_mosum       <- requireNamespace("mosum", quietly = TRUE)
+has_idetect     <- requireNamespace("IDetect", quietly = TRUE)
+has_breakfast   <- requireNamespace("breakfast", quietly = TRUE)
+has_cpm         <- requireNamespace("cpm", quietly = TRUE)
+has_decafs      <- requireNamespace("DeCAFS", quietly = TRUE)
+has_inspect     <- requireNamespace("InspectChangepoint", quietly = TRUE)
+has_strucchange <- requireNamespace("strucchange", quietly = TRUE)
+has_segmented   <- requireNamespace("segmented", quietly = TRUE)
+has_fastcpd     <- requireNamespace("fastcpd", quietly = TRUE)
+has_envcpt      <- requireNamespace("EnvCpt", quietly = TRUE)
+
+## ----contract-----------------------------------------------------------------
 set.seed(2022)
 x <- c(rnorm(100, 0, 1), rnorm(100, 10, 1))
-
 res <- cpt_detect(x, method = "pelt", change_in = "mean")
-class(res)
+res
+tidy(res)
+glance(res)
+head(augment(res))
 
-## -----------------------------------------------------------------------------
-print(res)
+## ----contract-plot------------------------------------------------------------
+autoplot(res, show_segments = TRUE)
 
-## -----------------------------------------------------------------------------
-res$cp_convention
+## ----methods-table------------------------------------------------------------
+cpt_methods()
 
-## -----------------------------------------------------------------------------
-generics::tidy(res)
+## ----penalty------------------------------------------------------------------
+cpt_penalty("BIC", n = 200)
+cpt_penalty("MBIC", n = 200)
+cpt_penalty("Hannan-Quinn", n = 200)
+cpt_penalty("sSIC", n = 200)
 
-## -----------------------------------------------------------------------------
-generics::glance(res)
+## ----tour-data----------------------------------------------------------------
+set.seed(2026)
+x_mean  <- c(rnorm(100), rnorm(100, 4))                # mean shift at 100
+x_multi <- c(rnorm(100), rnorm(100, 3), rnorm(100, -1)) # shifts at 100, 200
+x_slope <- cumsum(c(rep(0.4, 100), rep(-0.3, 100))) + rnorm(200) # kink at 100
 
-## -----------------------------------------------------------------------------
-generics::augment(res)
+## ----penalised----------------------------------------------------------------
+tidy(cpt_detect(x_multi, method = "pelt"))
+tidy(cpt_detect(x_multi, method = "binseg"))
 
-## -----------------------------------------------------------------------------
-cpt_detect(x, method = "pelt", change_in = "mean")
+## ----penalised-fpop, eval = has_fpop------------------------------------------
+tidy(cpt_detect(x_multi, method = "fpop"))
 
-## ----eval = has_fpop----------------------------------------------------------
-cpt_detect(x, method = "fpop", change_in = "mean")
+## ----crops, fig.alt = "CROPS elbow plot: segmentation cost against the number of changepoints"----
+path <- cpt_crops(x_multi)
+path
+autoplot(path)
 
-## -----------------------------------------------------------------------------
-cpt_detect(x, method = "pelt", change_in = "mean", penalty = "BIC")
+## ----crops-segmentations, fig.alt = "The series faceted by CROPS solution, each panel showing that solution's changepoints"----
+autoplot(path, type = "segmentations")
 
-## ----eval = has_fpop----------------------------------------------------------
-cpt_detect(x, method = "fpop", change_in = "mean", penalty = 2 * log(200))
+## ----fastcpd, eval = has_fastcpd----------------------------------------------
+# tidy(fastcpd_wrapper(x_multi, family = "mean"))
 
-## -----------------------------------------------------------------------------
-ggplot2::autoplot(res)
+## ----search-wbs, eval = has_wbs-----------------------------------------------
+tidy(wbs_wrapper(x_multi, seed = 1))
 
-## -----------------------------------------------------------------------------
-ggplot2::autoplot(res, show_segments = TRUE)
+## ----search-not, eval = has_not-----------------------------------------------
+tidy(not_wrapper(x_multi, seed = 1))
 
-## -----------------------------------------------------------------------------
-ggcptplot(x)
-ggecpplot(x, min_size = 10)
+## ----search-mosum, eval = has_mosum-------------------------------------------
+tidy(mosum_wrapper(x_multi))
 
-## -----------------------------------------------------------------------------
-ggplot(data.frame(t = seq_along(x), y = x), aes(t, y)) +
-  geom_line() +
-  geom_changepoint(data = generics::tidy(res), aes(xintercept = cp))
+## ----search-others, eval = has_idetect && has_breakfast-----------------------
+tidy(idetect_wrapper(x_multi, seed = 1))
+tidy(wbs2_wrapper(x_multi))
+tidy(tguh_wrapper(x_multi))
 
-## -----------------------------------------------------------------------------
-seg <- res$segments
-ggplot(data.frame(t = seq_along(x), y = x), aes(t, y)) +
-  geom_line() +
-  geom_cpt_segment(data = seg,
-                   aes(x = start, xend = end, y = param_estimate,
-                       yend = param_estimate),
-                   colour = "steelblue", linewidth = 1.2)
+## ----smuce, eval = has_stepR, fig.alt = "SMUCE step fit with changepoint-location confidence intervals drawn as horizontal whiskers"----
+# res_smuce <- smuce_wrapper(x_multi)
+# tidy(res_smuce)
+# autoplot(res_smuce, show_ci = TRUE, show_fit = TRUE)
 
-## -----------------------------------------------------------------------------
-ggplot(data.frame(t = seq_along(x), y = x), aes(t, y)) +
-  geom_line() +
-  stat_changepoint(method = "pelt", change_in = "mean")
+## ----cpop, eval = has_cpop----------------------------------------------------
+# res_cpop <- cpop_wrapper(x_slope)
+# tidy(res_cpop)
+# autoplot(res_cpop, show_fit = TRUE)
 
-## -----------------------------------------------------------------------------
-x3 <- c(rnorm(100, 0, 1), rnorm(100, 10, 1), rnorm(100, 5, 2))
-cmp_methods <- if (has_fpop) c("pelt", "binseg", "fpop") else c("pelt", "binseg", "amoc")
+## ----not-slope, eval = has_not------------------------------------------------
+tidy(cpt_detect(x_slope, method = "not", change_in = "slope"))
 
-ggcpt_compare(x3, methods = cmp_methods, layout = "facet")
+## ----bcp, eval = has_bcp, fig.alt = "Two-panel Bayesian display: the series with its posterior mean above, per-location posterior changepoint probability below"----
+# res_bcp <- bcp_wrapper(x_mean, seed = 2026)
+# tidy(res_bcp)
+# ggcpt_posterior(res_bcp)
 
-## -----------------------------------------------------------------------------
-ggcpt_compare(x3, methods = cmp_methods, layout = "overlay")
+## ----bocpd, eval = has_ocp, fig.alt = "Run-length heatmap: posterior probability of each run length over time"----
+# res_bocpd <- bocpd_wrapper(x_mean)
+# tidy(res_bocpd)
+# ggcpt_runlength(res_bocpd)
 
-## -----------------------------------------------------------------------------
-ggcpt_compare_table(x3, methods = cmp_methods)
+## ----nonparam-----------------------------------------------------------------
+set.seed(2022)
+tidy(cpt_detect(x_mean, method = "np"))
+tidy(cpt_detect(x_mean, method = "ecp", seed = 1))
 
-## ----eval = FALSE-------------------------------------------------------------
-# future::plan(future::multisession, workers = 2)
-# ggcpt_compare(x, methods = c("pelt", "binseg", "fpop", "wbs", "not"),
-#               seed = 1)
+## ----cpm, eval = has_cpm------------------------------------------------------
+# tidy(cpm_wrapper(x_mean, cpm_type = "Mann-Whitney"))
 
-## -----------------------------------------------------------------------------
-cpt_metrics(pred = c(100, 200), truth = c(100, 200), n = 300)
+## ----decafs, eval = has_decafs------------------------------------------------
+# res_decafs <- decafs_wrapper(x_mean)
+# tidy(res_decafs)
+# autoplot(res_decafs, show_fit = TRUE)
 
-## -----------------------------------------------------------------------------
-cpt_metrics(pred = c(105, 205), truth = c(100, 200), n = 300, margin = 10)
+## ----envcpt, eval = has_envcpt------------------------------------------------
+# res_env <- envcpt_wrapper(x_mean, models = c("mean", "meancpt", "trendcpt"))
+# glance(res_env)
 
-## -----------------------------------------------------------------------------
-cpt_metrics_annotated(pred = c(100, 200),
-                      annotations = list(c(100, 200), c(105, 198)),
-                      n = 300)
+## ----inspect, eval = has_inspect, fig.alt = "Faceted small-multiples, one panel per coordinate, sharing the detected changepoint rules"----
+# set.seed(2026)
+# X <- cbind(a = c(rnorm(80), rnorm(80, 3)),
+#            b = c(rnorm(80), rnorm(80, -2)),
+#            c = rnorm(160))
+# res_hd <- inspect_wrapper(X)
+# tidy(res_hd)
+# autoplot(res_hd)
 
-## -----------------------------------------------------------------------------
-ggcpt_eval(pred = c(100, 200), truth = c(100, 200), data_vec = x)
+## ----strucchange, eval = has_strucchange--------------------------------------
+# res_bp <- strucchange_wrapper(x_mean)
+# tidy(res_bp)
+# autoplot(res_bp, show_ci = TRUE)
 
-## -----------------------------------------------------------------------------
-seg_params <- list(
-  list(mean = 0, sd = 1),
-  list(mean = 10, sd = 1),
-  list(mean = 5, sd = 0.5),
-  list(mean = -2, sd = 1)
-)
-dat <- cpt_simulate(200, changepoints = c(50, 100, 150),
-                    change_in = "meanvar",
-                    params = seg_params)
+## ----segmented, eval = has_segmented------------------------------------------
+# res_seg <- segmented_wrapper(x_slope, npsi = 1, seed = 1)
+# tidy(res_seg)
+# autoplot(res_seg, show_fit = TRUE, show_ci = TRUE)
 
-## -----------------------------------------------------------------------------
-attr(dat, "true_changepoints")
+## ----batch, fig.alt = "Small-multiples of a panel of series, each with its own detected changepoints"----
+set.seed(2026)
+panel <- cbind(shifted = x_mean, quiet = rnorm(200))
+batch <- cpt_batch(panel, method = "pelt")
+batch
+tidy(batch)
+autoplot(batch)
 
-## -----------------------------------------------------------------------------
-blocks  <- signal_blocks(512)
-fms     <- signal_fms(512)
-mix     <- signal_mix(512)
-teeth   <- signal_teeth(512)
-stairs  <- signal_stairs(512)
+## ----stability, fig.alt = "Bootstrap detection-frequency profile across the series, with the original changepoints marked"----
+st <- cpt_stability(x_mean, method = "pelt", B = 50, seed = 1)
+st
+autoplot(st)
 
-## -----------------------------------------------------------------------------
-set.seed(1)
-sig <- signal_blocks(512)
-truth <- attr(sig, "true_changepoints")
-
-x_noisy <- sig$value + rnorm(512, 0, 0.5)
-
-## -----------------------------------------------------------------------------
-methods_cs <- c("pelt", "binseg", "amoc")
-if (has_fpop) methods_cs <- c(methods_cs, "fpop")
-if (has_wbs)  methods_cs <- c(methods_cs, "wbs")
-if (has_not)  methods_cs <- c(methods_cs, "not")
-
-metrics <- do.call(rbind, lapply(methods_cs, function(m) {
-  res  <- cpt_detect(x_noisy, method = m, change_in = "mean")
-  pred <- generics::tidy(res)$cp
-  data.frame(method = m, cpt_metrics(pred, truth, n = 512, margin = 5))
-}))
-metrics[, c("method", "n_pred", "precision", "recall", "f1", "covering")]
-
-## -----------------------------------------------------------------------------
-pred_pelt <- generics::tidy(cpt_detect(x_noisy, method = "pelt"))$cp
-ggcpt_eval(pred = pred_pelt, truth = truth, data_vec = x_noisy)
+## ----cite---------------------------------------------------------------------
+cpt_cite("pelt")
 

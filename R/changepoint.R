@@ -23,10 +23,22 @@
 #' @param ... Extra arguments for each \code{cpt} function mentioned in the
 #'   \code{change_in} section.
 #'
+#' @section Standardise the data for a change in mean:
+#' With \code{change_in = "mean"} the upstream Normal cost assumes a noise
+#' standard deviation of 1 and the penalty is compared against the raw
+#' residual sum of squares, so a series with wider noise is under-penalised
+#' and over-segmented: 29 changepoints instead of 1 at \eqn{\sigma = 3} in a
+#' measured example. Standardise the series first, or use
+#' \code{change_in = "mean_var"}, which estimates a variance per segment and
+#' is unaffected. See the scale-sensitivity section of
+#' \code{\link{cpt_detect}}.
+#'
 #' @return A tibble including which point(s) is/are the changepoint along with
 #'   raw changepoint value corresponding to that changepoint. Changepoint
 #'   locations follow the convention of the \code{changepoint} package: the
-#'   last index of the left segment.
+#'   last index of the left segment. The upstream \code{cpt} object is
+#'   attached as the \code{"ggcpt_fit"} attribute, which is what
+#'   \code{\link{cpt_detect}()} stores in the result's \code{$fit}.
 #' @import changepoint
 #' @import changepoint.np
 #' @import tibble
@@ -60,6 +72,16 @@ cpt_wrapper <- function(data,
 
   cp_method <- match.arg(cp_method, c("AMOC", "PELT", "SegNeigh", "BinSeg"))
 
+  # changepoint.np::cpt.np() implements PELT only: it rejects "AMOC" outright
+  # and has no `Q` argument, so BinSeg/SegNeigh die on the segment-count clamp
+  # below with "unused argument (Q = ...)". Refuse up front with the reason.
+  is_np <- change_in %in% c("np", "cpt_np")
+  if (is_np && cp_method != "PELT") {
+    stop("`change_in = \"", change_in, "\"` uses changepoint.np, which ",
+         "implements `cp_method = \"PELT\"` only (got \"", cp_method,
+         "\").", call. = FALSE)
+  }
+
   cpt_fun <- switch(change_in,
     mean_var = changepoint::cpt.meanvar,
     mean     = changepoint::cpt.mean,
@@ -68,10 +90,56 @@ cpt_wrapper <- function(data,
     cpt_np   = changepoint.np::cpt.np
   )
 
-  fit <- cpt_fun(data, method = cp_method, ...)
+  # The changepoint package's default penalty (MBIC) is not implemented for
+  # SegNeigh; fall back to SIC unless the caller supplied a penalty.
+  args <- list(data, method = cp_method, ...)
+
+  # A numeric penalty is not a valid changepoint-package penalty name; the
+  # engine requires penalty = "Manual" together with pen.value = <number>.
+  if (is.numeric(args$penalty)) {
+    args$pen.value <- args$penalty
+    args$penalty <- "Manual"
+  }
+
+  if (cp_method == "SegNeigh" && !"penalty" %in% names(args)) {
+    args$penalty <- "SIC"
+  }
+
+  # BinSeg/SegNeigh use a default Q (max segments) that can exceed what a
+  # short series admits, which the engine rejects. Clamp Q to a length-safe
+  # value when the caller has not supplied one.
+  if (cp_method %in% c("BinSeg", "SegNeigh") && !"Q" %in% names(args)) {
+    n <- length(data)
+    if (cp_method == "SegNeigh") {
+      # Segment Neighbourhood is valid only for 3 <= Q <= q_hi: it indexes
+      # Q - 2 internally, so Q < 3 is rejected outright (whatever the series
+      # length), and the upper bound is the number of segments the data admit
+      # -- n - 2 for a change in mean, floor(n / 2) + 1 once a variance is
+      # estimated per segment.
+      q_hi <- if (change_in == "mean") n - 2L else as.integer(floor(n / 2) + 1L)
+      if (q_hi < 3L) {
+        stop("SegNeigh requires at least Q = 3 maximum segments, but ", n,
+             " observations admit at most Q = ", q_hi,
+             ". Use `cp_method = \"PELT\"` or \"BinSeg\" for a series this short.",
+             call. = FALSE)
+      }
+      args$Q <- max(3L, min(5L, q_hi))
+    } else {
+      q_cap <- max(1L, floor(n / 2) - 1L)
+      args$Q <- min(5L, q_cap)
+    }
+  }
+
+  fit <- do.call(cpt_fun, args)
   cp <- changepoint::cpts(fit)
 
-  tibble::tibble(cp = cp, cp_value = data[cp])
+  out <- tibble::tibble(cp = cp, cp_value = data[cp])
+  # Carry the upstream `cpt` object along so cpt_detect() can store it on the
+  # ggcpt result's `$fit`, the way every other engine's wrapper does. It rides
+  # as an attribute rather than a column so this function's documented return
+  # value -- a two-column tibble -- is unchanged.
+  attr(out, "ggcpt_fit") <- fit
+  out
 }
 
 
