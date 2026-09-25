@@ -52,13 +52,13 @@ table of segment residual sums of squares, which is what lets
 \code{strucchange} return the optimal segmentation for \emph{any} number
 of breaks without refitting. Measured here, the whole result is about
 1.7 MB at \code{n = 200}, 5.9 MB at \code{n = 400} and 22.6 MB at
-\code{n = 800} — roughly four times larger each time the series doubles —
+\code{n = 800}, roughly four times larger each time the series doubles,
 and that one table outweighs everything else in the fit put together, by a
 margin that widens as the series grows. A single fit is not a problem; a
 few hundred of them are, so when running this engine over a panel with
 \code{\link{cpt_batch}()} keep what you need
 (\code{res$changepoints}) rather than the whole list of results. No other
-engine here behaves this way: the median result across the other thirty is
+engine here behaves this way: the median result across the others is
 under ten times the size of the series it was given.
 }
 
@@ -74,3 +74,49 @@ res$changepoints
 
 \insertRef{zeileis2002strucchange}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

@@ -1,4 +1,4 @@
-#' SMUCE / HSMUCE wrapper — multiscale changepoint inference
+#' SMUCE / HSMUCE wrapper: multiscale changepoint inference
 #'
 #' Wraps \code{stepR::stepFit()} for the Simultaneous MUltiscale Changepoint
 #' Estimator (SMUCE) of Frick, Munk and Sieling (2014) and its heterogeneous
@@ -21,7 +21,7 @@
 #'   specification; call \code{stepR::stepFit()} directly for those.
 #'   \code{"hsmuce"} additionally refuses a series whose point-to-point
 #'   variation lies more than about seven orders of magnitude below its own
-#'   scale — a globally flat series, or a step whose segments are numerically
+#'   scale: a globally flat series, or a step whose segments are numerically
 #'   constant, as \code{cpt_simulate(sd = 0)} produces once any rounding is
 #'   added. \pkg{stepR}'s heterogeneous variance estimator aborts the \R
 #'   session on such input rather than raising an error, so it cannot be
@@ -44,9 +44,14 @@
 #' res$changepoints
 #' ggplot2::autoplot(res, show_ci = TRUE)
 #' }
+#' @family changepoint engines
 smuce_wrapper <- function(x, alpha = 0.5,
                           family = c("gauss", "hsmuce"), ...) {
   need_pkg("stepR")
+  reject_managed_args(list(...), if (identical(family, "hsmuce")) "hsmuce" else "smuce",
+    c(jumpint = paste("the wrapper needs stepR's jump intervals to fill the",
+                      "`ci_lower`/`ci_upper` columns, which is the reason",
+                      "to use SMUCE in the first place")))
   family <- match.arg(family)
 
   validate_data(x)

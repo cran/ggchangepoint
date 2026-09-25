@@ -27,8 +27,8 @@
 #' With \code{change_in = "mean"} the upstream Normal cost assumes a noise
 #' standard deviation of 1 and the penalty is compared against the raw
 #' residual sum of squares, so a series with wider noise is under-penalised
-#' and over-segmented: 29 changepoints instead of 1 at \eqn{\sigma = 3} in a
-#' measured example. Standardise the series first, or use
+#' and over-segmented: about 39 changepoints instead of 1 at
+#' \eqn{\sigma = 3} on 200 observations (mean over 20 draws). Standardise the series first, or use
 #' \code{change_in = "mean_var"}, which estimates a variance per segment and
 #' is unaffected. See the scale-sensitivity section of
 #' \code{\link{cpt_detect}}.
@@ -39,10 +39,19 @@
 #'   last index of the left segment. The upstream \code{cpt} object is
 #'   attached as the \code{"ggcpt_fit"} attribute, which is what
 #'   \code{\link{cpt_detect}()} stores in the result's \code{$fit}.
+# `@import changepoint` is load-bearing and must stay. `broom-methods.R`
+# calls bare `logLik(fit)` to fill glance()'s `cost` column, and the method
+# for class `cpt` is an **S4** method owned by changepoint: measured,
+# `isGeneric("logLik", where = asNamespace("changepoint"))` is TRUE with one
+# `cpt` method, while `stats::logLik` has no S3 method for it and errors
+# with "no applicable method". Only the full import puts that S4 generic in
+# this package's imports environment, so plain dispatch finds it.
+#
+# The other six full imports were removed as dead weight (see below); this
+# is the one that is not, and the audit note is here so it survives the next
+# sweep for unqualified calls -- a grep for `changepoint::` finds nothing
+# for `logLik` precisely because qualifying it is what breaks it.
 #' @import changepoint
-#' @import changepoint.np
-#' @import tibble
-#' @import Rdpack
 #' @references
 #' \insertRef{killick2014changepoint}{ggchangepoint}
 #' @export
@@ -52,6 +61,7 @@
 #' cpt_wrapper(c(rnorm(100,0,1),rnorm(100,0,10)))
 #' cpt_wrapper(c(rnorm(100,0,1),rnorm(100,10,1)))
 #'
+#' @family changepoint engines
 cpt_wrapper <- function(data,
                         change_in = "mean_var",
                         cp_method = "PELT",
@@ -59,12 +69,22 @@ cpt_wrapper <- function(data,
 
   change_in <- match.arg(change_in, c("mean_var", "mean", "var", "np", "cpt_np"))
 
+  # `...` reaches changepoint::cpt.*(), whose `method` this function renames
+  # to `cp_method`; passing the engine's own name gave R's raw "formal
+  # argument \"method\" matched by multiple actual arguments".
+  reject_renamed_args(list(...), "cpt_wrapper")
+
+  reject_multicolumn(data, "data",
+                     paste("`cpt_wrapper()` wraps the univariate changepoint",
+                           "package; use `ecp_wrapper()` for a multivariate",
+                           "series."))
   if (!is.numeric(data)) {
-    stop("`data` must be numeric.", call. = FALSE)
+    stop("`data` must be numeric.", nonnumeric_columns_note(data),
+         call. = FALSE)
   }
   data <- as.numeric(data)
   if (anyNA(data) || any(!is.finite(data))) {
-    stop("`data` must be finite (no NA/NaN/Inf).", call. = FALSE)
+    stop_nonfinite(data, "data")
   }
   if (length(data) < 3) {
     stop("`data` must have at least 3 observations.", call. = FALSE)
@@ -93,6 +113,12 @@ cpt_wrapper <- function(data,
   # The changepoint package's default penalty (MBIC) is not implemented for
   # SegNeigh; fall back to SIC unless the caller supplied a penalty.
   args <- list(data, method = cp_method, ...)
+
+  # A learned penalty (see cpt_learn_penalty()) is a model, not a number;
+  # resolve it against this series before anything else looks at it.
+  if (inherits(args$penalty, "ggcpt_penalty_model")) {
+    args$penalty <- resolve_penalty_model(args$penalty, data)
+  }
 
   # A numeric penalty is not a valid changepoint-package penalty name; the
   # engine requires penalty = "Manual" together with pen.value = <number>.
@@ -170,13 +196,25 @@ cpt_wrapper <- function(data,
 #' @return A line plot with data points along with the vertical lines
 #'   representing changepoints.
 #' @export
-#' @import ggplot2
-#' @import dplyr
-#' @import tibble
+# `@import ggplot2`, `dplyr` and `tibble` removed: every call into all
+# three is namespace-qualified, so the full imports bought nothing and
+# `import(dplyr)` cost something. It rebinds base's `setdiff`, `intersect`,
+# `union`, `filter`, `lag` and `n` inside the namespace, and this package
+# calls the bare set operations at eighteen sites meaning base semantics.
+# They agree today because dplyr's generics dispatch to base for atomic
+# vectors -- but `dplyr::setdiff.data.frame` is row-wise, so the first time
+# one of those sites is handed a data frame the meaning changes with no diff
+# to point at. `autoplot` is still available: it comes in through
+# `importFrom(ggplot2, autoplot)`, which is what re-exports the generic.
+#
+# Measured before removing: `R CMD INSTALL` emitted no "replacing previous
+# import" warning for the dplyr/ggplot2 `vars` collision, so this is not a
+# check finding -- it is a latent-semantics one.
 #' @examples
 #' ggcptplot(c(rnorm(100,0,1),rnorm(100,0,10)))
 #' ggcptplot(c(rnorm(100,0,1),rnorm(100,10,1)))
 #'
+#' @family plotting
 ggcptplot <- function(data,
                       change_in = "mean_var",
                       cp_method = "PELT",
@@ -190,9 +228,29 @@ ggcptplot <- function(data,
                       show_points = NULL,
                       show_line = TRUE){
 
+  # Same rename as cpt_wrapper() below it, and the same collision: `...`
+  # reaches changepoint::cpt.*(), whose `method` is this function's
+  # `cp_method`.
+  reject_renamed_args(list(...), "cpt_wrapper", label = "ggcptplot")
+
   if (lifecycle::is_present(cptline_size)) {
     lifecycle::deprecate_soft("0.2.0", "ggcptplot(cptline_size)", "ggcptplot(cptline_linewidth)")
     cptline_linewidth <- cptline_size
+  }
+
+  # The line plot is univariate, and as.numeric() on a matrix concatenates
+  # its columns -- so a 120x2 input drew 240 points with a seam at 120 and
+  # a changepoint reported there. ggecpplot() already had the convention for
+  # this: draw the first column and say so. `show_points` below depends on
+  # the observation count, so the reduction has to come first (length() on
+  # the matrix would be rows times columns).
+  if (is.matrix(data) || is.data.frame(data)) {
+    if (ncol(as.matrix(data)) > 1) {
+      message("Multivariate input: plotting the first column. ",
+              "Use autoplot(cpt_detect(data, method = \"pelt\")) for a ",
+              "faceted multivariate plot.")
+    }
+    data <- as.numeric(as.matrix(data)[, 1])
   }
 
   if (is.null(show_points)) {

@@ -28,13 +28,13 @@
 #' \code{strucchange} return the optimal segmentation for \emph{any} number
 #' of breaks without refitting. Measured here, the whole result is about
 #' 1.7 MB at \code{n = 200}, 5.9 MB at \code{n = 400} and 22.6 MB at
-#' \code{n = 800} — roughly four times larger each time the series doubles —
+#' \code{n = 800}, roughly four times larger each time the series doubles,
 #' and that one table outweighs everything else in the fit put together, by a
 #' margin that widens as the series grows. A single fit is not a problem; a
 #' few hundred of them are, so when running this engine over a panel with
 #' \code{\link{cpt_batch}()} keep what you need
 #' (\code{res$changepoints}) rather than the whole list of results. No other
-#' engine here behaves this way: the median result across the other thirty is
+#' engine here behaves this way: the median result across the others is
 #' under ten times the size of the series it was given.
 #' @references
 #' \insertRef{bai2003computation}{ggchangepoint}
@@ -45,22 +45,42 @@
 #' set.seed(2026)
 #' res <- strucchange_wrapper(c(rnorm(100), rnorm(100, 3)))
 #' res$changepoints
+#' @family changepoint engines
 strucchange_wrapper <- function(x, data = NULL, breaks = NULL, h = 0.15,
                                 conf_level = 0.95, ...) {
   need_pkg("strucchange")
+  reject_renamed_args(list(...), "strucchange")
   # A confidence level outside (0, 1) is meaningless, and `level = 2` makes
   # stats::confint() on a breakpoints fit spin without ever returning -- a
   # tryCatch() cannot rescue a call that does not terminate, so it has to be
   # refused up front.
   validate_scalar(conf_level, "conf_level", min = 0, max = 1,
                   min_open = TRUE, max_open = TRUE)
+  # A fraction of the series below 1, a number of observations from 1 up.
+  # `h = NA` failed with "missing value where TRUE/FALSE needed" and a
+  # vector with "the condition has length > 1".
+  validate_scalar(h, "h", min = 0, min_open = TRUE)
+  # `breaks = 0` warned "number of breaks must be at least 1" and then fitted
+  # one, `2.5` failed with "compute RSS.table with enough breaks before", and
+  # `NA` or a vector failed without naming the argument.
+  if (!is.null(breaks)) {
+    validate_scalar(breaks, "breaks", min = 1)
+    if (breaks != round(breaks)) {
+      stop("`breaks` must be a whole number of breaks (got ", breaks, ").",
+           call. = FALSE)
+    }
+  }
 
   if (inherits(x, "formula")) {
     if (is.null(data)) {
       stop("`data` must be supplied when `x` is a formula.", call. = FALSE)
     }
     response <- all.vars(x)[1]
-    data_vec <- as.numeric(data[[response]])
+    # The formula interface reads the response column straight out of `data`,
+    # which as.numeric() would silently turn into level codes for a factor --
+    # the one series-bearing path in the package that the type guard on `x`
+    # cannot see, because here `x` is the formula.
+    data_vec <- coerce_series_values(data[[response]], arg = response)
     fml <- x
   } else {
     validate_data(x)
@@ -71,7 +91,12 @@ strucchange_wrapper <- function(x, data = NULL, breaks = NULL, h = 0.15,
 
   args <- list(formula = fml, data = data, h = h, ...)
   if (!is.null(breaks)) args$breaks <- breaks
-  fit <- do.call(strucchange::breakpoints, args)
+  fit <- engine_short_series(
+    do.call(strucchange::breakpoints, args),
+    "strucchange", length(data_vec),
+    paste0("The minimum segment is `h` * n = ", h, " * ", length(data_vec),
+           " = ", floor(h * length(data_vec)),
+           " observations; raise `h` or lengthen the series."))
 
   bp <- fit$breakpoints
   if (length(bp) == 1 && is.na(bp)) bp <- integer(0)
@@ -118,7 +143,10 @@ strucchange_wrapper <- function(x, data = NULL, breaks = NULL, h = 0.15,
 #' @param npsi Number of breakpoints to estimate. Defaults to \code{1}.
 #' @param conf_level Confidence level for breakpoint intervals. Defaults to
 #'   \code{0.95}.
-#' @param seed Optional seed (the estimator uses bootstrap restarting).
+#' @param seed Optional seed (the estimator uses bootstrap restarting). The
+#'   seed is scoped to this call: \code{.Random.seed} is saved and restored,
+#'   so a seeded call inside a simulation loop does not pin the loop's own
+#'   stream.
 #' @param ... Additional arguments passed to \code{segmented::segmented()}.
 #' @return A \code{ggcpt} object with \code{ci_lower}/\code{ci_upper} columns
 #'   and the fitted broken line in \code{$data$fitted}. Breakpoints are
@@ -136,14 +164,31 @@ strucchange_wrapper <- function(x, data = NULL, breaks = NULL, h = 0.15,
 #' res <- segmented_wrapper(y, npsi = 1)
 #' res$changepoints
 #' ggplot2::autoplot(res, show_fit = TRUE, show_ci = TRUE)
+#' @family changepoint engines
 segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
                               ...) {
   need_pkg("segmented")
+  reject_renamed_args(list(...), "segmented")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(npsi, "npsi", min = 1)
   validate_scalar(conf_level, "conf_level", min = 0, max = 1,
                   min_open = TRUE, max_open = TRUE)
 
   validate_data(x)
   data_vec <- as_uni_vector(x, "segmented")
+  # Every segment of a broken line needs two points for its slope. Past
+  # that the engine either refuses with "psi starting values too close each
+  # other" or, for `npsi = 1e6` on 120 observations, runs without returning.
+  max_psi <- floor(length(data_vec) / 2) - 1
+  if (npsi > max_psi) {
+    stop("`npsi = ", format(npsi), "` asks for more breakpoints than a series ",
+         "of ", length(data_vec), " can hold: each of the npsi + 1 segments ",
+         "needs two observations, so at most ", max_psi, ".", call. = FALSE)
+  }
 
   # A flat line has no kink. Left to itself the estimator returns an
   # arbitrary breakpoint from a singular fit (with Lapack warnings), i.e. a
@@ -157,7 +202,7 @@ segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
 
   df <- data.frame(.y = data_vec, .t = seq_along(data_vec))
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   base_fit <- stats::lm(.y ~ .t, data = df)
   fit <- segmented::segmented(base_fit, seg.Z = ~.t, npsi = npsi, ...)
@@ -172,6 +217,12 @@ segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
   }
 
   psi <- fit$psi[, "Est."]
+  # `round()`, not the truncation as_cp_locations() and as_ggcpt() use: a
+  # `segmented` breakpoint is a KINK POSITION estimated on the continuous
+  # scale, so the nearest observation is the honest reading of it, where
+  # truncating would bias every breakpoint left by half an observation on
+  # average. It is the one place in the package that rounds rather than
+  # truncates a fractional location, so @return says so.
   cp_indices <- as.integer(round(psi))
 
   ci <- tryCatch(segmented::confint.segmented(fit, level = conf_level),
@@ -200,11 +251,11 @@ segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
   )
 }
 
-#' EnvCpt wrapper — changepoints versus trends versus autocorrelation
+#' EnvCpt wrapper: changepoints versus trends versus autocorrelation
 #'
 #' Wraps \code{EnvCpt::envcpt()} (Beaulieu and Killick, 2018), which fits up
-#' to twelve competing models — constant mean or linear trend, each with or
-#' without changepoints, and with white-noise, AR(1) or AR(2) errors — and
+#' to twelve competing models (constant mean or linear trend, each with or
+#' without changepoints, and with white-noise, AR(1) or AR(2) errors) and
 #' lets an information criterion decide whether the series really contains
 #' changepoints or merely trend/autocorrelation ("memory"). The changepoints
 #' of the winning model (if any) are returned, and the winning model's name
@@ -221,9 +272,11 @@ segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
 #' @return A \code{ggcpt} object. \code{$fit} holds the full \code{envcpt}
 #'   output; the selected model name is stored in the penalty descriptor and
 #'   printed by \code{glance()} via \code{penalty_type}. Individual model
-#'   fits that fail are expected — the criterion ignores them — so the
+#'   fits that fail are expected (the criterion ignores them), so the
 #'   engine's own \code{try()} output is not passed on; genuine warnings
 #'   still are, and a series on which no model fits at all raises an error.
+#'   A constant series has no changepoints and is not handed to the engine,
+#'   so \code{$fit} is \code{NULL} there.
 #' @references
 #' \insertRef{beaulieu2018envcpt}{ggchangepoint}
 #' @export
@@ -231,6 +284,7 @@ segmented_wrapper <- function(x, npsi = 1, conf_level = 0.95, seed = NULL,
 #' set.seed(2026)
 #' res <- envcpt_wrapper(c(rnorm(100), rnorm(100, 3)))
 #' res$changepoints
+#' @family changepoint engines
 envcpt_wrapper <- function(x, models = c("mean", "meancpt", "meanar1",
                                          "meanar2", "meanar1cpt",
                                          "meanar2cpt", "trend", "trendcpt",
@@ -238,23 +292,62 @@ envcpt_wrapper <- function(x, models = c("mean", "meancpt", "meanar1",
                                          "trendar1cpt", "trendar2cpt"),
                            criterion = c("AIC", "BIC"), minseglen = 5, ...) {
   need_pkg("EnvCpt")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(minseglen, "minseglen", min = 2)
+  reject_managed_args(list(...), "envcpt", c(
+    verbose = paste("the wrapper keeps the engine's \"Fitting 12 models\"",
+                    "narration and its progress bar out of the result")))
   criterion <- match.arg(criterion)
 
   validate_data(x)
   data_vec <- as_uni_vector(x, "envcpt")
 
+  # A constant series plainly has no changepoints, and the engine fits its
+  # twelve models to it anyway: every `lm()` in there is an exact fit, so
+  # `summary.lm()` warned "essentially perfect fit: summary may be
+  # unreliable" twice per call -- the only two warnings the whole test suite
+  # raised. Advice about an internal regression the caller never ran. Every
+  # other wrapper that meets a flat series reports none; so does this one.
+  if (is_constant(data_vec)) {
+    return(ggcpt_build(data_vec, integer(0), method = "envcpt",
+                       change_in = "mean",
+                       penalty = list(type = criterion, value = NA_real_),
+                       call = match.call()))
+  }
+
   # EnvCpt fits up to twelve models with try(), and a try() that is not
-  # silent prints its error straight to stderr. On a degenerate series
-  # several of the AR fits fail that way, so the call succeeds and returns a
-  # perfectly good answer after printing "Error in arima(...): non-stationary
-  # AR part from CSS" -- which reads as a failure. Divert the message stream
-  # for the duration: individual model failures are expected here (the
-  # criterion simply ignores the non-finite ones, and a run where nothing
-  # fits gets its own error below), while genuine warnings are deferred past
-  # the diversion and still reach the user.
+  # silent prints its error straight to stderr, where it reads as a failure
+  # even though the call succeeded and the criterion simply ignores the
+  # non-finite fits (a run where nothing fits gets its own error below).
+  #
+  # Re-measured: the cited example -- "Error in arima(...): non-stationary
+  # AR part from CSS" -- would not reproduce on any of eight series chosen
+  # to provoke it (a random walk, an explosive AR(1), a doubly-integrated
+  # series, one scaled to 1e6, a numerically-constant one, an exact step,
+  # and two ordinary two-segment series): zero stderr lines each. What the
+  # engine does still write to stderr is its own "Fitting 12 models"
+  # narration, and that is already off because this call passes
+  # `verbose = FALSE`. So the diversion is now a cheap safety net rather
+  # than a fix for an observed leak -- kept because an upstream try() that
+  # stops being silent would otherwise print into the caller's console,
+  # and because it costs nothing.
+  #
+  # What the diversion must NOT do is swallow real conditions, and it does
+  # not: a genuine warning ("possible convergence problem: optim gave
+  # code = 1", from a trending series) is deferred past the diversion and
+  # still reaches the user.
   utils::capture.output(
-    fit <- EnvCpt::envcpt(data_vec, models = models, minseglen = minseglen,
-                          verbose = FALSE, ...),
+    fit <- engine_short_series(
+      EnvCpt::envcpt(data_vec, models = models, minseglen = minseglen,
+                     verbose = FALSE, ...),
+      "envcpt", length(data_vec),
+      paste0("Every model must fit two segments of `minseglen` = ",
+             minseglen, ", so the series needs more than ", 2 * minseglen,
+             " observations; lower `minseglen` or lengthen the series.")),
     type = "message"
   )
 

@@ -9,6 +9,7 @@
   show_segments = FALSE,
   show_ci = FALSE,
   show_fit = FALSE,
+  show_regions = NULL,
   cptline_alpha = 1,
   cptline_color = "blue",
   cptline_type = "solid",
@@ -16,6 +17,8 @@
   show_points = NULL,
   show_line = TRUE,
   index = NULL,
+  labels = NULL,
+  type = c("series", "statistic", "path", "scale_space"),
   ...
 )
 }
@@ -27,13 +30,28 @@ Defaults to \code{FALSE}.}
 
 \item{show_ci}{Logical. Whether to draw confidence intervals for
 changepoint locations, when the engine provides them (columns
-\code{ci_lower}/\code{ci_upper} on the changepoints tibble — SMUCE,
-strucchange, segmented). Drawn as horizontal whiskers near the bottom
-of the panel. Defaults to \code{FALSE}.}
+\code{ci_lower}/\code{ci_upper} on the changepoints tibble, supplied by
+the engines \code{\link{cpt_methods}()} marks in its \code{ci} column:
+\code{smuce}, \code{hsmuce}, \code{strucchange}, \code{segmented},
+\code{mcp}, \code{bfast} and \code{taylor}). \code{nsp} is marked there as
+well but is not drawn by this argument: it reports
+\code{region_start}/\code{region_end} rather than an interval around an
+estimate, which \code{show_regions} draws. Drawn as horizontal whiskers
+near the bottom of the panel. Defaults to \code{FALSE}.}
 
 \item{show_fit}{Logical. Whether to draw the engine's fitted signal (the
-\code{fitted} column of \code{$data}, provided by SMUCE, DeCAFS, cpop,
-segmented, bcp, beast). Defaults to \code{FALSE}.}
+\code{fitted} column of \code{$data}, provided by the engines
+\code{\link{cpt_methods}()} marks in its \code{fitted} column:
+\code{smuce}, \code{hsmuce}, \code{cpop}, \code{bcp}, \code{beast},
+\code{decafs}, \code{segmented}, \code{mcp} and \code{bfast}). Defaults to
+\code{FALSE}.}
+
+\item{show_regions}{Logical. Whether to shade the significance regions an
+interval-valued method returns (the \code{regions} slot; currently
+\code{\link{nsp_wrapper}()}). Each band is an interval that contains at
+least one changepoint at the stated global level; it is not a confidence
+interval around a point estimate. Defaults to \code{TRUE} when the
+result carries regions, and is ignored otherwise.}
 
 \item{cptline_alpha}{Alpha for changepoint lines. Defaults to \code{1}.}
 
@@ -48,9 +66,29 @@ segmented, bcp, beast). Defaults to \code{FALSE}.}
 \item{show_line}{Logical. Whether to draw the line. Defaults to \code{TRUE}.}
 
 \item{index}{Optional vector of x-axis values (e.g. dates) of the same
-length as the series; defaults to the observation index.}
+length as the series. Defaults to the time index carried by the result
+(see the \code{index} argument of \code{\link{cpt_detect}()}), and to
+the observation position when there is none.}
 
-\item{...}{Unknown arguments are ignored with a warning.}
+\item{labels}{Optional \code{\link{cpt_labels}()} tibble. When supplied,
+the labelled regions are shaded behind the series and coloured by the
+outcome \code{\link{cpt_label_error}()} gives them (correct, false
+positive, false negative), so scoring a segmentation against expert
+labels becomes a picture rather than a table. Not drawn for a
+multivariate result, which warns instead.}
+
+\item{type}{Which view to draw. \code{"series"} (default) is the series
+with its changepoints; \code{"statistic"} and \code{"path"} delegate
+to \code{\link{ggcpt_statistic}()} and
+\code{\link{ggcpt_solution_path}()}, which error with the list of
+supporting engines when this one does not expose the internals.
+\code{"scale_space"} delegates to \code{\link{ggcpt_scale_space}()},
+which needs nothing from the engine: it sweeps a multiscale detector
+over the same series, so it draws for any result.}
+
+\item{...}{Unknown arguments are ignored with a warning, except when
+\code{type} is not \code{"series"}, in which case they are passed to
+the delegate.}
 }
 \value{
 A ggplot object.
@@ -62,4 +100,10 @@ and (optionally) fitted segment levels, the engine's fitted signal, and
 changepoint-location confidence intervals are overlaid. Multivariate
 results (from \code{ecp}, \code{inspect}, \code{geomcp}, ...) are drawn as
 faceted small-multiples with shared changepoint rules.
+}
+\seealso{
+\code{\link{ggcpt_plot_methods}} for the base \code{plot()}
+  methods that delegate here, and \code{\link{theme_ggcpt}()} and
+  \code{\link{geom_changepoint}()} for restyling and re-assembling the
+  layers by hand.
 }

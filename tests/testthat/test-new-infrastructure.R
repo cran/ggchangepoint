@@ -51,6 +51,7 @@ test_that("autoplot.ggcpt works", {
 })
 
 test_that("cpt_detect dispatches methods", {
+  skip_on_cran()
   set.seed(2022)
   x <- c(rnorm(100, 0, 1), rnorm(100, 10, 1))
 
@@ -62,7 +63,12 @@ test_that("cpt_detect dispatches methods", {
   res2 <- cpt_detect(x, method = "binseg", change_in = "mean")
   expect_s3_class(res2, "ggcpt")
 
-  res3 <- cpt_detect(x, method = "segneigh", change_in = "mean", penalty = "BIC")
+  # `changepoint` advises PELT on every segneigh call; asserting it keeps a
+  # known upstream notice out of the suite's warning report.
+  expect_warning(
+    res3 <- cpt_detect(x, method = "segneigh", change_in = "mean",
+                       penalty = "BIC"),
+    "SegNeigh is computationally slow")
   expect_s3_class(res3, "ggcpt")
 
   res4 <- cpt_detect(x, method = "np", change_in = "distribution")
@@ -87,7 +93,7 @@ test_that("cpt_penalty works", {
   expect_true(is.numeric(cpt_penalty("Hannan-Quinn", n = 100)))
   expect_true(is.numeric(cpt_penalty("sSIC", n = 100)))
   expect_equal(cpt_penalty("Manual", value = 5), 5)
-  expect_error(cpt_penalty("Manual"))
+  expect_error(cpt_penalty("Manual"), "`value` must be supplied")
 })
 
 test_that("cpt_metrics works", {

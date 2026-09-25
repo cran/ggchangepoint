@@ -22,7 +22,17 @@ new_ggcpt(
 \item{changepoints}{A tibble with columns \code{cp} and \code{cp_value}.}
 
 \item{segments}{A tibble with segment information: \code{seg_id}, \code{start},
-\code{end}, \code{n}, \code{param_estimate}.}
+\code{end}, \code{n}, \code{param_estimate}. \code{param_estimate} is
+the segment \strong{mean} for every method in the package, including
+the variance, distribution and model-change detectors: it is the
+segment level, not the parameter that changed. A \code{change_in =
+"var"} result therefore has a \code{param_estimate} column that may
+barely move; read the variance off the data with the segment bounds if
+that is the quantity you want. Everything derived from this column
+inherits the convention: \code{augment()}'s \code{.fitted}/
+\code{.resid}, \code{\link{cpt_gt}()}'s level columns,
+\code{summary()}, and the residual construction the bootstrap in
+\code{\link{cpt_confint}()} and \code{\link{cpt_stability}()} uses.}
 
 \item{data}{A tibble with \code{index} and \code{value}.}
 
@@ -41,7 +51,14 @@ because every other column would be recycled against it.)}
 matrix that is quadratic in the series length, so keeping it by
 default would make the result object explode on a long series. Call
 \code{ecp::e.divisive()} or \code{ecp::e.agglo()} directly if you
-need it.}
+need it. A few of the engines that \emph{are} kept are still large
+relative to the data: measured on a 2000-point series,
+\code{strucchange} costs about 135 MB (a triangular \eqn{O(n^2)} RSS
+matrix), \code{bfast} about 53 MB and \code{bocpd} about 31 MB, while
+every other engine stays under 4 MB. That is the engine's own object,
+not overhead this package adds, and it matters mainly when many results
+are held at once: \code{\link{cpt_batch}(keep_fit = FALSE)} drops
+them, or assign \code{res$fit <- NULL} yourself.}
 
 \item{call}{The matched call.}
 
@@ -54,8 +71,57 @@ by \code{ecp}). Defaults to \code{"left"}.}
 Defaults to \code{NA}.}
 }
 \value{
-An object of class \code{ggcpt}.
+An object of class \code{ggcpt}, holding exactly the
+  components passed in (documented one by one above) plus any of the
+  optional slots listed below. Nothing is validated or derived:
+  \code{\link{as_ggcpt}()} is the constructor that does both.
 }
 \description{
-Create a ggcpt object
+The low-level constructor for the class every detector in this package
+returns. It assembles the components into a \code{ggcpt} without checking
+them, which is what makes it useful inside a wrapper and unsuitable as the
+entry point for hand-built input; use \code{\link{as_ggcpt}()} for that.
 }
+\section{Optional slots}{
+
+Beyond the components in the signature, a \code{ggcpt} may carry any of
+these, each present only when something supplied it and each safe to test
+for with \code{is.null()}:
+\describe{
+  \item{\code{data_wide}}{index plus one column per coordinate, for a
+    multivariate result.}
+  \item{\code{index}, \code{index_label}}{a time index (one value per
+    observation) and its axis label; see the \code{index} argument of
+    \code{\link{cpt_detect}()}.}
+  \item{\code{regions}}{a tibble of significance regions
+    (\code{start}, \code{end}, ...) for the interval-valued methods;
+    see \code{\link{nsp_wrapper}()} and \code{\link{geom_cpt_region}()}.}
+  \item{\code{diagnostics}}{a named list of engine internals rendered by
+    \code{\link{ggcpt_statistic}()},
+    \code{\link{ggcpt_solution_path}()} and
+    \code{\link{ggcpt_scale_space}()}.}
+  \item{\code{registered}}{\code{TRUE} when the result came from a
+    user-registered detector rather than a wired engine.}
+}
+\code{\link{as_ggcpt}()} is the validating way to build one of these from
+the outside; this constructor does not check its arguments.
+}
+
+\examples{
+set.seed(2026)
+new_ggcpt(
+  changepoints = tibble::tibble(cp = 50L, cp_value = 0.1),
+  data = tibble::tibble(index = 1:100,
+                        value = c(rnorm(50), rnorm(50, 4))),
+  method = "manual", change_in = "mean")
+}
+\seealso{
+Other result class: 
+\code{\link{annotate_segments}()},
+\code{\link{as_cpt_series}()},
+\code{\link{as_ggcpt}()},
+\code{\link{cpt_annotations}()},
+\code{\link{is_ggcpt}()},
+\code{\link{print.ggcpt}()}
+}
+\concept{result class}

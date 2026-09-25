@@ -5,26 +5,40 @@
 #' users. See \code{\link{cpt_methods}()} for the full method table with
 #' engines and capabilities.
 #'
-#' @param x A numeric vector for univariate methods, or a numeric
-#'   matrix/data frame (rows are time points) for the multivariate methods
-#'   (\code{"ecp"}, \code{"inspect"}, \code{"geomcp"}, \code{"ocd"},
-#'   \code{"npmojo"}, \code{"kcp"}, \code{"fastcpd"}).
-#' @param method Detection method. One of \code{"pelt"}, \code{"binseg"},
-#'   \code{"segneigh"}, \code{"amoc"}, \code{"np"}, \code{"ecp"},
-#'   \code{"fpop"}, \code{"wbs"}, \code{"wbs2"}, \code{"not"},
-#'   \code{"mosum"}, \code{"idetect"}, \code{"tguh"}, \code{"smuce"},
-#'   \code{"hsmuce"}, \code{"cpop"}, \code{"bcp"}, \code{"bocpd"},
-#'   \code{"beast"}, \code{"cpm"}, \code{"kcp"}, \code{"npmojo"},
-#'   \code{"decafs"}, \code{"sn"}, \code{"inspect"}, \code{"ocd"},
-#'   \code{"geomcp"}, \code{"strucchange"}, \code{"segmented"},
-#'   \code{"envcpt"}, or \code{"fastcpd"}. Methods whose engines live in
-#'   \code{Suggests} prompt for installation when missing.
+#' @param x The series. A numeric vector for univariate methods, or a
+#'   numeric matrix/data frame (rows are time points) for the multivariate
+#'   methods (run \code{subset(cpt_methods(), multivariate)$method} for the
+#'   list). A \code{ts}, \code{xts}, \code{zoo} or (unkeyed) \code{tsibble}
+#'   is accepted directly and its time index is carried through to
+#'   \code{tidy()} and \code{autoplot()}; so is a data frame together with
+#'   \code{y} (and optionally \code{index}).
+#' @param method Detection method: any \code{method} in
+#'   \code{cpt_methods()} whose \code{status} is \code{"available"} or
+#'   \code{"registered"}. Methods whose engines live in \code{Suggests}
+#'   report what to install when missing;
+#'   \code{\link{cpt_register_method}()} adds detectors this package does
+#'   not wrap.
 #' @param change_in What to detect change in. One of \code{"mean"},
-#'   \code{"var"}, \code{"meanvar"}, \code{"slope"}, or
-#'   \code{"distribution"}. Defaults to \code{"mean"}. The requested value
-#'   is validated against the method's capabilities
-#'   (see \code{cpt_methods()}); incompatible combinations error rather than
-#'   silently running something else.
+#'   \code{"var"}, \code{"meanvar"}, \code{"slope"},
+#'   \code{"distribution"}, \code{"covariance"}, \code{"network"},
+#'   \code{"regression"} or \code{"seasonality"}. Defaults to
+#'   \code{"mean"}. The requested value is validated against the method's
+#'   capabilities (see \code{cpt_methods()}); incompatible combinations
+#'   error rather than silently running something else.
+#'
+#'   A \emph{compatible} request may still be routed to the method's own
+#'   native change type, because several engines have no separate estimator
+#'   for the thing being asked about. That is never silent: the result's
+#'   \code{change_in} records what was actually detected, so compare it
+#'   with what you asked for. Measured across every method and every value
+#'   its \code{supports} entry lists, six pairs are routed:
+#'   \code{not}'s \code{"var"} becomes \code{"meanvar"} (its variance
+#'   contrast is piecewise-constant in mean \emph{and} variance),
+#'   \code{cpm}'s \code{"mean"} and \code{"var"} both become
+#'   \code{"distribution"}, \code{kcp}'s become \code{"running mean"} and
+#'   \code{"running var"}, and \code{wbsts}'s \code{"mean"} becomes
+#'   \code{"var"} (it detects change in the wavelet spectrum). Every other
+#'   listed combination returns the change type it was asked for.
 #' @param penalty Penalty type or value. Either a character string
 #'   (\code{"MBIC"}, \code{"BIC"}, \code{"SIC"}, \code{"AIC"},
 #'   \code{"Hannan-Quinn"}, \code{"None"}) or a numeric penalty value.
@@ -36,11 +50,25 @@
 #'   Segment Neighbourhood. Note also that the default \code{"MBIC"} is
 #'   resolved to a \emph{numeric} value for the numeric-penalty engines
 #'   (\code{"fpop"}, \code{"cpop"}, \code{"decafs"}), and that value is
-#'   stronger than those wrappers' own \code{2 * log(n)} default — 19.9
-#'   against 11.8 at \eqn{n = 360} — so \code{cpt_detect(x, method =
+#'   stronger than those wrappers' own \code{2 * log(n)} default (19.9
+#'   against 11.8 at \eqn{n = 360}), so \code{cpt_detect(x, method =
 #'   "decafs")} can report fewer changepoints than \code{decafs_wrapper(x)}
 #'   on the same series. Pass \code{penalty} explicitly to make the two
 #'   entry points agree.
+#' @param index Optional time index, one value per observation (dates, say).
+#'   Detection still runs on observation positions (every wrapped engine
+#'   assumes an equally spaced sequence), but the index is stored on the
+#'   result and threaded through \code{tidy()} (as \code{cp_index}),
+#'   \code{augment()}, \code{autoplot()} and \code{\link{cpt_report}()},
+#'   so the output speaks in the user's own units. An index that is not
+#'   equally spaced warns. When \code{x} is a data frame and \code{y} is
+#'   given, \code{index} selects a column of that data frame instead of
+#'   being a vector.
+#' @param y Column selection for the data-frame interface:
+#'   \code{cpt_detect(df, y = value, index = date, method = "pelt")}. A bare
+#'   column name, a string, or a column position. Only meaningful when
+#'   \code{x} is a data frame; a data frame passed without \code{y} keeps
+#'   its 0.4.0 meaning (one column per coordinate).
 #' @param ... Additional arguments passed to the specific wrapper (see the
 #'   wrapper's help page for engine-specific options). Where an argument is
 #'   also derived from \code{change_in} (\code{not}'s \code{contrast},
@@ -49,9 +77,10 @@
 #'   supplied here takes precedence. Check the spelling against the wrapper's
 #'   help page: several engines end their own signature in \code{...}
 #'   (\pkg{wbs}, \pkg{not}, \pkg{Rbeast}, \pkg{strucchange},
-#'   \pkg{segmented}, \pkg{fastcpd}), so for those a misspelt argument name
-#'   is silently discarded upstream and the engine quietly uses its default
-#'   rather than reporting the typo.
+#'   \pkg{segmented}, \pkg{fastcpd}, \pkg{fChange}, \pkg{bfast}), so for
+#'   those a misspelt argument name is silently discarded upstream and the
+#'   engine quietly uses its default rather than reporting the typo. Every
+#'   other wired method rejects an unknown argument by name.
 #'
 #' @section Scale sensitivity of the penalised change-in-mean engines:
 #' \code{"pelt"}, \code{"binseg"}, \code{"segneigh"} and \code{"fpop"}
@@ -60,10 +89,13 @@
 #' noise standard deviation of 1, and \pkg{fpop}'s \code{lambda} is an
 #' absolute penalty on the residual sum of squares. Neither rescales the
 #' data, so on a series whose noise is much wider than 1 the penalty is
-#' effectively negligible and the segmentation shatters. On one true
-#' changepoint with a jump of five standard deviations, \code{"pelt"}
-#' returns 1 changepoint at \eqn{\sigma = 1}, 29 at \eqn{\sigma = 3} and
-#' 138 at \eqn{\sigma = 10}. Three ways to avoid it, in order of
+#' effectively negligible and the segmentation shatters. On 200 observations
+#' with one true changepoint in the middle and a jump of five standard
+#' deviations, \code{"pelt"} returns 1 changepoint at \eqn{\sigma = 1}, 39
+#' at \eqn{\sigma = 3} and 141 at \eqn{\sigma = 10}. These are means over 20
+#' draws, because a single draw is not stable here: the same three settings
+#' gave 21/75 at \eqn{n = 100} and 57/266 at \eqn{n = 400}, so the effect
+#' grows with the series as well as with the noise. Three ways to avoid it, in order of
 #' convenience:
 #' \itemize{
 #'   \item standardise the series first
@@ -73,12 +105,36 @@
 #'   \item use \code{change_in = "meanvar"}, which estimates a variance per
 #'     segment and is unaffected.
 #' }
-#' The other engines are unaffected: SMUCE, WBS, WBS2, NOT, MOSUM,
-#' Isolate-Detect, TGUH, CPOP, DeCAFS and the Bayesian, nonparametric and
-#' multivariate methods all estimate or cancel the noise scale internally,
-#' and return the same segmentation whatever the units.
+#' Most other engines are unaffected: SMUCE, WBS, WBS2, NOT, MOSUM,
+#' Isolate-Detect, TGUH, CPOP, \code{"bcp"}, \code{"beast"} and the
+#' nonparametric and multivariate methods estimate or cancel the noise scale
+#' internally, and returned the same segmentation at a thousandth, one and
+#' a thousand times the units. Three did not, on the same series:
+#' \code{"geomcp"} runs PELT on its mapped distance and angle series and so
+#' inherits the sensitivity above; \code{"decafs"} floors its noise
+#' estimate at about 0.03, so it under-segments a series whose noise is
+#' smaller than that; and \code{"bocpd"}'s default prior is on the data's
+#' own scale. At a thousandth of the units the last two found nothing.
+#' Standardising first avoids all three.
 #'
-#' @return A \code{ggcpt} object.
+#' @return A \code{ggcpt} object: a list with \code{changepoints}
+#'   (\code{cp}, \code{cp_value}), \code{segments} (\code{seg_id},
+#'   \code{start}, \code{end}, \code{n}, \code{param_estimate}),
+#'   \code{data} (\code{index}, \code{value}), the \code{method},
+#'   \code{change_in}, \code{penalty}, \code{cp_convention} and
+#'   \code{runtime} that produced it, the matched \code{call}, and
+#'   \code{fit}, the raw upstream object. Optional slots
+#'   (\code{data_wide}, \code{regions}, \code{diagnostics}, ...) appear
+#'   only when an engine supplies them; \code{\link{new_ggcpt}()}
+#'   documents all of them, and \code{\link{tidy.ggcpt}()},
+#'   \code{\link{glance.ggcpt}()} and \code{\link{augment.ggcpt}()}
+#'   are the supported way to read one.
+#' @seealso \code{\link{cpt_methods}()} for what is available and what each
+#'   method can do. To get the result out: \code{\link{tidy.ggcpt}()},
+#'   \code{\link{glance.ggcpt}()}, \code{\link{augment.ggcpt}()},
+#'   \code{\link{summary.ggcpt}()} and \code{\link{print.ggcpt}()}. To
+#'   draw it: \code{\link{autoplot.ggcpt}()}. For the penalty:
+#'   \code{\link{cpt_penalty}()}.
 #' @export
 #'
 #' @examples
@@ -87,13 +143,53 @@
 #' result <- cpt_detect(x, method = "pelt", change_in = "mean")
 #' result
 #' ggplot2::autoplot(result)
+#'
+#' # A date index: detection is unchanged, but the report speaks in dates.
+#' dates <- as.Date("2000-01-01") + 0:199
+#' dated <- cpt_detect(x, method = "pelt", index = dates)
+#' tidy(dated)
+#'
+#' # The data-frame interface.
+#' df <- data.frame(day = dates, value = x)
+#' cpt_detect(df, y = value, index = day, method = "pelt")
 cpt_detect <- function(x,
                        method = "pelt",
                        change_in = "mean",
                        penalty = "MBIC",
+                       index = NULL,
+                       y = NULL,
                        ...) {
 
-  # `cpt_methods()` advertises four engines as "planned", but match.arg()
+  user_call <- match.call()
+  y_expr <- substitute(y)
+  index_expr <- substitute(index)
+  caller <- parent.frame()
+
+  # ---- data-frame interface -----------------------------------------------
+  # `cpt_detect(df, y = value, index = date)`. `y` and `index` are column
+  # selections here (bare name, string, or position), not vectors, and the
+  # branch is entered only when `y` is supplied -- a bare data frame keeps
+  # its 0.4.0 meaning (a one-column series, or a multivariate matrix).
+  if (!is.null(y_expr) && is.data.frame(x)) {
+    df <- as.data.frame(x)
+    yv <- df_column(df, y_expr, "y", caller)
+    if (!is.numeric(yv)) {
+      stop("`y` must select a numeric column; got ", class(yv)[1], ".",
+           call. = FALSE)
+    }
+    index <- if (!is.null(index_expr)) {
+      df_column(df, index_expr, "index", caller)
+    } else {
+      NULL
+    }
+    x <- as.numeric(yv)
+  } else if (!is.null(y_expr)) {
+    stop("`y` selects a column and is only meaningful when `x` is a data ",
+         "frame. Pass the series itself as `x`.", call. = FALSE)
+  }
+
+  # ---- planned and registered methods --------------------------------------
+  # `cpt_methods()` advertises five engines as "planned", but match.arg()
   # answered a request for one of them with the generic "'arg' should be one
   # of ..." list, which does not contain it -- so the table said the name
   # exists and the dispatcher said it does not. Name the situation instead.
@@ -110,16 +206,58 @@ cpt_detect <- function(x,
            paste0("the ", row$target_release)
          }, ".", call. = FALSE)
   }
-  method <- match.arg(method, cpt_methods_table()$method)
-  change_in <- match.arg(change_in,
-                         c("mean", "var", "meanvar", "slope", "distribution"))
+
+  registered <- if (is.character(method) && length(method) == 1L) {
+    registry_get(method)
+  } else {
+    NULL
+  }
+  if (is.null(registered)) {
+    method <- match.arg(method, builtin_registry()$method)
+  }
+  change_in <- match.arg(change_in, cpt_change_in_levels())
+
+  # ---- coerce the series, keeping any time index it carries ---------------
+  series <- as_cpt_series(x, index = index)
+  x <- series$values
+  idx <- series$index
 
   validate_data(x)
   validate_method_change_in(method, change_in)
 
+  # A learned penalty (see cpt_learn_penalty()) is resolved to a number for
+  # this series before anything else looks at `penalty`, so every engine --
+  # the ones taking a character penalty and the ones taking a numeric one --
+  # sees a value it understands.
+  if (inherits(penalty, "ggcpt_penalty_model")) {
+    penalty <- unname(stats::predict(penalty,
+                                     if (is.matrix(x) || is.data.frame(x)) {
+                                       as.numeric(as.matrix(x)[, 1])
+                                     } else {
+                                       as.numeric(x)
+                                     }))[1]
+  }
+
+  # `penalty` reaches the engines by half a dozen routes, and a malformed
+  # value fell through all of them: `NA` or a misspelt name silently became
+  # the fpop, cpop, decafs or fastcpd default, a vector was cut to its first
+  # element (or printed as two penalties), and a negative number put a
+  # changepoint at every observation. A registered method only records the
+  # penalty, so its own vocabulary is left alone.
+  if (is.null(registered) && !is.null(penalty)) {
+    if (is.numeric(penalty)) {
+      validate_scalar(penalty, "penalty", min = 0)
+    } else if (!is.character(penalty) || length(penalty) != 1L ||
+               is.na(penalty)) {
+      stop("`penalty` must be one penalty name (\"MBIC\", \"BIC\", ...) or ",
+           "one non-negative number (got ",
+           paste(format(penalty), collapse = ", "), ").", call. = FALSE)
+    }
+  }
+
   is_mv <- is.matrix(x) || is.data.frame(x)
-  mv_methods <- c("ecp", "inspect", "geomcp", "ocd", "npmojo", "kcp",
-                  "fastcpd")
+  reg <- full_registry()
+  mv_methods <- reg$method[reg$multivariate]
   if (is_mv && ncol(as.matrix(x)) > 1 && !method %in% mv_methods) {
     stop("Method `", method, "` is univariate, but `x` has ",
          ncol(as.matrix(x)), " columns. Multivariate methods: ",
@@ -129,7 +267,10 @@ cpt_detect <- function(x,
 
   t0 <- proc.time()[["elapsed"]]
 
-  if (method %in% c("pelt", "binseg", "segneigh", "amoc", "np")) {
+  if (!is.null(registered)) {
+    res <- run_registered_method(registered, x, change_in = change_in,
+                                 penalty = penalty, ...)
+  } else if (method %in% c("pelt", "binseg", "segneigh", "amoc", "np")) {
     ci <- change_in_mapping(change_in)
     cp_method <- switch(method,
       pelt    = "PELT",
@@ -160,54 +301,72 @@ cpt_detect <- function(x,
   } else {
     # Convert penalty to numeric for methods that need it
     pen_val <- resolve_numeric_penalty(penalty, n = length(data_vec))
+    # A name this cannot translate used to fall back to the wrapper's own
+    # default without a word, so `penalty = "mbic"` ran at 2 * log(n) and
+    # said "Manual". fastcpd translates a different set, below.
+    if (method %in% c("fpop", "cpop", "decafs") && is.character(penalty) &&
+        is.null(pen_val)) {
+      stop("Method `", method, "` takes a numeric penalty, and \"", penalty,
+           "\" is not a name cpt_detect() can translate into one. Use ",
+           paste0("\"", numeric_penalty_names(), "\"", collapse = ", "),
+           ", or a number.", call. = FALSE)
+    }
+    if (identical(method, "fastcpd") && is.character(penalty) &&
+        !toupper(penalty) %in% toupper(c("MDL", numeric_penalty_names()))) {
+      stop("Method `fastcpd` does not recognise the penalty \"", penalty,
+           "\". Use \"MBIC\", \"BIC\", \"SIC\" or \"MDL\", which it shares, ",
+           "one of the names left to its default (\"AIC\", ",
+           "\"Hannan-Quinn\", \"sSIC\", \"None\"), or a number.",
+           call. = FALSE)
+    }
 
     dots <- list(...)
-    # Call a wrapper with the arguments this dispatcher derives (from
-    # `change_in`, `penalty`, or the method name). A value the caller passed
-    # through `...` wins over the derived one, so
+    # Call the registry's wrapper with the arguments this dispatcher derives
+    # (from `change_in`, `penalty`, or the method name). A value the caller
+    # passed through `...` wins over the derived one, so
     # `cpt_detect(x, method = "not", contrast = "pcwsLinMean")` overrides the
     # contrast instead of erroring with "matched by multiple actual
     # arguments". `x` is passed as a symbol so the wrapper's `match.call()`
     # stays compact rather than inlining the whole series.
-    run <- function(wrapper, derived = list()) {
-      derived <- derived[setdiff(names(derived), names(dots))]
-      do.call(wrapper, c(list(x = quote(x)), derived, dots),
-              envir = environment())
-    }
-
-    res <- switch(method,
-      fpop     = run("fpop_wrapper", list(penalty = pen_val)),
-      wbs      = run("wbs_wrapper"),
-      wbs2     = run("wbs2_wrapper"),
-      not      = run("not_wrapper",
-                     list(contrast = not_contrast_for(change_in))),
-      mosum    = run("mosum_wrapper"),
-      idetect  = run("idetect_wrapper"),
-      tguh     = run("tguh_wrapper"),
-      smuce    = run("smuce_wrapper"),
-      hsmuce   = run("smuce_wrapper", list(family = "hsmuce")),
-      cpop     = run("cpop_wrapper", list(penalty = pen_val)),
-      bcp      = run("bcp_wrapper"),
-      bocpd    = run("bocpd_wrapper"),
-      beast    = run("beast_wrapper"),
-      cpm      = run("cpm_wrapper",
-                     list(cpm_type = cpm_type_for(change_in))),
-      kcp      = run("kcp_wrapper",
-                     list(running_stat = kcp_stat_for(change_in))),
-      npmojo   = run("npmojo_wrapper"),
-      decafs   = run("decafs_wrapper", list(penalty = pen_val)),
-      sn       = run("sn_wrapper", list(parameter = sn_param_for(change_in))),
-      inspect  = run("inspect_wrapper"),
-      ocd      = run("ocd_wrapper"),
-      geomcp   = run("geomcp_wrapper"),
-      strucchange = run("strucchange_wrapper"),
-      segmented = run("segmented_wrapper"),
-      envcpt   = run("envcpt_wrapper"),
-      fastcpd  = run("fastcpd_wrapper",
-                     list(family = fastcpd_family_for(change_in))),
+    wrapper <- reg$wrapper[match(method, reg$method)]
+    if (is.na(wrapper)) {
       stop("Method '", method, "' is not wired to a wrapper. ",
            "This is an internal error; please report it.", call. = FALSE)
-    )
+    }
+    derived <- derived_args_for(method, change_in, pen_val)
+    # A seasonal frequency the input carried (see as_cpt_series()) is one of
+    # the derived arguments: the series has been reduced to a bare vector by
+    # now, so an engine that needs a frequency would otherwise fall back to
+    # its own default -- bfast's is 12, which silently re-seasoned a
+    # quarterly `ts` as monthly. Only engines that take a `frequency` get
+    # it, and only when the caller did not name one.
+    if (!is.null(series$frequency) &&
+        "frequency" %in% names(formals(match.fun(wrapper)))) {
+      derived$frequency <- series$frequency
+    }
+    # fastcpd takes its penalty as `beta`, on its own scale -- so the
+    # resolved `pen_val`, computed on the Gaussian change-in-mean scale the
+    # changepoint-family engines use, is not it, and `derived_args_for()`
+    # returned only the family. `cpt_detect(x, method = "fastcpd", penalty =
+    # 5)` therefore resolved the 5 and threw it away. A number is
+    # unambiguous, and three of the names are shared with fastcpd verbatim;
+    # anything else is left to the engine's own default, which the
+    # penalty-semantics section of ?cpt_penalty now states.
+    if (identical(method, "fastcpd")) {
+      if (is.numeric(penalty)) {
+        derived$beta <- as.numeric(penalty)[1]
+      } else if (is.character(penalty) && length(penalty) == 1L &&
+                 toupper(penalty) %in% c("MBIC", "BIC", "SIC", "MDL")) {
+        derived$beta <- if (identical(toupper(penalty), "SIC")) {
+          "BIC"
+        } else {
+          toupper(penalty)
+        }
+      }
+    }
+    derived <- derived[setdiff(names(derived), names(dots))]
+    res <- do.call(wrapper, c(list(x = quote(x)), derived, dots),
+                   envir = environment())
   }
 
   runtime <- proc.time()[["elapsed"]] - t0
@@ -216,105 +375,286 @@ cpt_detect <- function(x,
   # match.call(), which for a dispatched run is an internal, unexported helper
   # (`wrap_cpt_to_ggcpt(x = data_vec, change_in = ci, ...)`) that the reader
   # can neither recognise nor re-run.
-  res$call <- match.call()
+  res$call <- user_call
+  attach_index(res, idx, series$index_label)
+}
+
+# Internal: run a user-registered detector and normalise whatever it returns
+# to a validated ggcpt. A registration may return a finished ggcpt (built
+# with as_ggcpt(), say) or a bare vector of indices; either way the result
+# goes through the same contract checks as a built-in wrapper, and the
+# method name and engine are taken from the registration rather than from
+# whatever the function decided to call itself.
+#' @noRd
+run_registered_method <- function(entry, x, change_in, penalty, ...) {
+  if (!change_in %in% entry$change_in) {
+    stop("`change_in = \"", change_in, "\"` is not supported by the ",
+         "registered method `", entry$method, "`. Supported: ",
+         paste(entry$change_in, collapse = ", "), ".", call. = FALSE)
+  }
+  # A registration is arbitrary user code, so it can fail in two different
+  # ways and they want different treatment. An error it raises deliberately
+  # -- `stop(..., call. = FALSE)`, as this package does throughout -- is the
+  # author's own message and passes through untouched. An error that LEAKS
+  # from base R or from a package the detector called carries the call that
+  # raised it (see the provenance note in the sweep tests), and arrived here
+  # as e.g. "non-numeric argument to mathematical function" with nothing to
+  # say which method produced it. Every built-in wrapper names itself when
+  # its engine fails; the registered path did not.
+  out <- withCallingHandlers(
+    entry$fn(x, ...),
+    error = function(e) {
+      if (!is.null(conditionCall(e))) {
+        stop("The function registered for `", entry$method, "` failed: ",
+             conditionMessage(e), call. = FALSE)
+      }
+    })
+  if (is_ggcpt(out)) {
+    # A returned ggcpt used to be taken entirely on trust, which let
+    # cpt_detect(x, method = <registered>) hand back a result about a
+    # different series -- wrong `$data` to plot, wrong row count from
+    # augment(), wrong n for every metric. The bare-vector branch below goes
+    # through as_ggcpt(); this is the one shape check the other branch gets
+    # for free.
+    n_in <- if (is.matrix(x) || is.data.frame(x)) {
+      nrow(as.matrix(x))
+    } else {
+      length(x)
+    }
+    n_out <- nrow(out$data)
+    if (!identical(as.integer(n_out), as.integer(n_in))) {
+      stop("The function registered for `", entry$method, "` returned a ",
+           "result for a different series: `x` has ", n_in,
+           " observation(s), the ggcpt it returned has ", n_out,
+           ". A registered method must detect on the series it is given.",
+           call. = FALSE)
+    }
+    out$method <- entry$method
+    out$registered <- TRUE
+    return(out)
+  }
+  if (!is.numeric(out) && !is.integer(out)) {
+    stop("The function registered for `", entry$method,
+         "` must return a ggcpt object or a numeric vector of changepoint ",
+         "indices; it returned an object of class ", class(out)[1], ".",
+         call. = FALSE)
+  }
+  # `as_ggcpt()` reports what it drops from `cp`, and its advice -- "check
+  # the values against the series rather than relying on this
+  # normalisation" -- is aimed at a person transcribing published breaks.
+  # That is the wrong reader here, which is why this report used to be
+  # muffled outright. But silence is the wrong answer too: a registered
+  # detector is code the CALLER wrote (an in-house method, a Python
+  # detector through reticulate), so an index this package cannot use is a
+  # bug in their detector, and dropping it without a word hides exactly the
+  # thing they need to see. Measured before this changed: a registration
+  # returning `c(30, NA, 60)` gave two changepoints and no warning, while
+  # `as_ggcpt(c(30, NA, 60), x)` warned -- so "the same contract checks as
+  # every built-in wrapper" was not what the registered path got.
+  #
+  # So: same information, re-aimed. The class-specific report is replaced
+  # rather than suppressed, and every other warning as_ggcpt() might raise
+  # still reaches the caller untouched.
+  n_supplied <- length(out)
+  res <- withCallingHandlers(
+    as_ggcpt(out, x, method = entry$method, change_in = change_in,
+             penalty = penalty, cp_convention = entry$cp_convention),
+    ggchangepoint_cp_dropped = function(w) invokeRestart("muffleWarning"))
+  n_kept <- nrow(res$changepoints)
+  # Two ways the detector's output can be altered, and a count catches only
+  # the first: values DROPPED (out of range, missing, duplicated) and values
+  # TRUNCATED (a fractional index becomes the whole number below it). The
+  # count-only version of this check was silent on `c(30.7, 60.2)` -- two
+  # supplied, two kept, and both quietly moved.
+  num <- suppressWarnings(as.numeric(out))
+  truncated <- sum(is.finite(num) & num != trunc(num))
+  if (n_kept < n_supplied || truncated > 0L) {
+    warning("The function registered for `", entry$method, "` returned ",
+            n_supplied, " changepoint(s); ",
+            if (n_kept < n_supplied) {
+              paste0(n_supplied - n_kept, " could not be used and ",
+                     if (n_kept == 1L) "1 was" else paste0(n_kept, " were"),
+                     " kept")
+            } else {
+              "all were kept"
+            },
+            if (truncated > 0L) {
+              paste0(", and ", truncated,
+                     " fractional value(s) were truncated to whole numbers")
+            } else {
+              ""
+            },
+            ". A location must be a whole number in 1..",
+            nrow(res$data) - 1L, ", and duplicates collapse. Check what ",
+            "the detector returns against that range.", call. = FALSE)
+  }
+  res$registered <- TRUE
   res
 }
 
 # Internal: the methods this release names but does not wire. Kept in one
 # place so `cpt_detect()` can recognise the name and say so, rather than
-# denying it exists. `robseg` and `FOCuS` have never been on CRAN and `gfpop`
-# was removed from it, so those three wait on the archive; `hdbinseg` is back
-# (1.0.3), so `sbs` waits only on the wrapper.
+# denying it exists.
+#
+# All five wait on CRAN availability, and that is now the whole list: every
+# method that was waiting only on a wrapper got one in 0.5.0. `gfpop` and
+# `cpss` were removed from CRAN, `robseg`, `FOCuS` and `changeforest` have
+# never been on it, and `hdbinseg` -- which the 0.5.0 roadmap recorded as
+# back at 1.0.3 -- is in the CRAN archive again as of this release, so
+# `sbs` stays here rather than moving to the wired table.
+#
+# The point of `cpt_register_method()` (see R/registry.R) is that none of
+# these is a hard blocker any more: install the engine from wherever it
+# lives and register it, and `cpt_detect()` dispatches to it with the whole
+# ggcpt toolchain attached.
 #' @noRd
 planned_methods <- function() {
   tibble::tribble(
-    ~method,   ~change_in,                 ~engine,    ~status,   ~target_release,
-    "gfpop",   "mean (graph-constrained)", "gfpop",    "planned", "when on CRAN",
-    "robust",  "mean (robust loss)",       "robseg",   "planned", "when on CRAN",
-    "focus",   "mean (online)",            "FOCuS",    "planned", "when on CRAN",
-    "sbs",     "mean (high-dimensional)",  "hdbinseg", "planned", "next release"
+    ~method,        ~change_in,                     ~engine,        ~status,   ~target_release,
+    "gfpop",        "mean (graph-constrained)",     "gfpop",        "planned", "when on CRAN",
+    "robust",       "mean (robust loss)",           "robseg",       "planned", "when on CRAN",
+    "focus",        "mean (online)",                "FOCuS",        "planned", "when on CRAN",
+    "sbs",          "mean (high-dimensional)",      "hdbinseg",     "planned", "when on CRAN",
+    "changeforest", "distribution (random forest)", "changeforest", "planned", "when on CRAN"
   )
 }
 
 #' Introspect available changepoint detection methods
 #'
-#' Returns a tibble describing every method the package knows about — those
-#' that are wired and those that are planned — along with their capabilities
-#' and installation status. Useful for discovering what can be run and what
-#' needs to be installed.
+#' Returns a tibble describing every method the package knows about (those
+#' that are wired, those a user has registered with
+#' \code{\link{cpt_register_method}()}, and those that are planned), along
+#' with their capabilities and installation status. Useful for discovering
+#' what can be run, what needs to be installed, and which methods expose the
+#' extras the diagnostics need (confidence intervals, a fitted signal, a
+#' posterior, a detector statistic, a solution path, a bandwidth to sweep).
+#'
+#' @param capabilities Include the capability flag columns? Defaults to
+#'   \code{TRUE}. Set \code{FALSE} for the compact 0.4.0-shaped table.
 #'
 #' @return A tibble with columns:
 #' \describe{
 #'   \item{method}{Method name as passed to \code{cpt_detect()}.}
 #'   \item{change_in}{What types of change the method can detect.}
 #'   \item{engine}{The upstream R package that implements the method.}
-#'   \item{status}{\code{"available"} (wired in this release) or \code{"planned"} (future).}
+#'   \item{status}{\code{"available"} (wired in this release),
+#'         \code{"registered"} (supplied by the user this session; see
+#'         \code{\link{cpt_register_method}()}), or \code{"planned"}
+#'         (future).}
 #'   \item{installed}{\code{TRUE} if the engine package is installed,
 #'         \code{FALSE} if it is a \code{Suggests} engine that is missing,
-#'         \code{NA} for planned methods.}
+#'         \code{NA} for planned and registered methods.}
 #'   \item{target_release}{What a planned method is waiting on: a release,
 #'         or \code{"when on CRAN"} when the engine package itself is not
 #'         available from CRAN. \code{NA} for methods that are already
 #'         wired. Asking \code{cpt_detect()} for a planned method reports
 #'         this rather than claiming the name does not exist.}
+#'   \item{multivariate, univariate, online, ci, fitted, posterior,
+#'         statistic, path, scale_space}{Capability flags (omitted when
+#'         \code{capabilities = FALSE}). \code{ci} means the engine
+#'         supplies changepoint-location confidence intervals; \code{fitted}
+#'         a length-\eqn{n} fitted signal; \code{posterior} a per-location
+#'         posterior probability; \code{statistic} and \code{path} the
+#'         internals rendered by \code{\link{ggcpt_statistic}()} and
+#'         \code{\link{ggcpt_solution_path}()}, which error with the list
+#'         of supporting engines when a result does not carry them.
+#'
+#'         \code{scale_space} is not one of those, despite sitting beside
+#'         them. Nothing stores a scale space on a result:
+#'         \code{\link{cpt_scale_space}()} computes one on demand by
+#'         sweeping a multiscale detector's bandwidth over the series, so
+#'         it works on \emph{any} series and any result, a \code{pelt}
+#'         fit included. What this column marks is the two engines that
+#'         sweep can be run \emph{with}, i.e. the domain of that
+#'         function's own \code{method} argument:
+#'         \code{subset(cpt_methods(), scale_space)$method}.
+#'
+#'         \code{online} means the \emph{algorithm} is sequential (it
+#'         consumes observations one at a time), and this table reports it
+#'         because it governs how the method behaves in batch: an online
+#'         detector's threshold is a rate per observation, so run over a
+#'         whole series through \code{\link{cpt_detect}()} it reports
+#'         roughly \eqn{n / \mathrm{arl0}} changepoints by construction.
+#'         It does \strong{not} mean the method can be passed to
+#'         \code{\link{cpt_monitor}()}, which takes its own three:
+#'         \code{"edetector"}, \code{"cpm"} and \code{"ocd"}. The two
+#'         sets overlap without coinciding: \code{bocpd} is an online
+#'         algorithm this table marks but the monitor does not offer, and
+#'         \code{edetector} is native to this package rather than a
+#'         wrapped engine, so it has no row here at all.}
 #' }
+#' @seealso \code{\link{cpt_install_engines}()} to install a whole family of
+#'   the engines this table reports on; \code{\link{cpt_detect}()} to run
+#'   one; \code{\link{cpt_register_method}()} to add your own.
 #' @export
 #'
 #' @examples
 #' cpt_methods()
-cpt_methods <- function() {
-  methods <- rbind(cpt_methods_table(), planned_methods())
+#' # which methods can draw a confidence interval?
+#' subset(cpt_methods(), ci)$method
+cpt_methods <- function(capabilities = TRUE) {
+  validate_flag(capabilities, "capabilities")
+  reg <- full_registry()
+  cap_cols <- c("multivariate", "univariate", "online", "ci", "fitted",
+                "posterior", "statistic", "path", "scale_space")
+  keep <- c("method", "change_in", "engine", "status", "target_release",
+            if (capabilities) cap_cols)
+  wired <- reg[, keep, drop = FALSE]
 
-  # Installation status: TRUE/FALSE for wired engines, NA for planned ones.
-  methods$installed <- ifelse(
-    methods$status == "planned",
-    NA,
-    vapply(methods$engine, function(pkg) {
-      if (pkg %in% c("changepoint", "changepoint.np", "ecp")) return(TRUE)  # Imports
-      requireNamespace(pkg, quietly = TRUE)
-    }, logical(1))
-  )
+  planned <- planned_methods()[, c("method", "change_in", "engine", "status",
+                                   "target_release"), drop = FALSE]
+  if (capabilities) {
+    for (cl in cap_cols) planned[[cl]] <- NA
+    planned <- planned[, keep, drop = FALSE]
+  }
 
-  methods
+  methods <- rbind(wired, planned)
+
+  # Installation status: TRUE/FALSE for wired engines, NA for planned and
+  # registered ones (a registration supplies the detector itself, so there is
+  # no package for this package to look for).
+  # Assign NA first and fill only the `available` subset: ifelse() evaluates
+  # BOTH arms, so this used to call find.package() for all 55 rows -- the
+  # five planned engines and every registered one included -- and then throw
+  # those answers away. A registration made with `engine = NULL` stores
+  # NA_character_, which find.package() is then handed.
+  methods$installed <- NA
+  avail <- methods$status == "available"
+  if (any(avail)) {
+    methods$installed[avail] <- vapply(methods$engine[avail],
+                                       engine_installed, logical(1))
+  }
+
+  # Keep the 0.4.0 column order: the capability flags go after `installed`.
+  front <- c("method", "change_in", "engine", "status", "installed",
+             "target_release")
+  methods[, c(front, setdiff(names(methods), front)), drop = FALSE]
 }
 
-# Internal: the single source of truth for wired methods.
+# Internal: is an engine installed?
+#
+# This asks the library, it does not load the package. `requireNamespace()`
+# would be the obvious call, but loading is the wrong operation for a
+# question about installation, and it is not free: building the
+# `cpt_methods()` table would load thirty-five namespaces, and a namespace
+# can do anything on the way in. `fabisearch` pulls in `rgl`, which warns
+# about the X11 display on every headless machine, and on macOS fails in
+# `dyn.load()` outright because the runner has no `libGLU`. Neither is
+# information about whether the engine is installed.
+#
+# `find.package()` answers the actual question and touches nothing.
+#' @noRd
+engine_installed <- function(pkg) {
+  if (pkg %in% c("changepoint", "changepoint.np", "ecp")) return(TRUE)  # Imports
+  length(suppressWarnings(find.package(pkg, quiet = TRUE))) > 0L
+}
+
+# Internal: the wired-method table in its 0.4.0 shape, derived from the
+# registry so there is one source of truth rather than three.
 #' @noRd
 cpt_methods_table <- function() {
-  tibble::tribble(
-    ~method,       ~change_in,                            ~engine,              ~status,      ~target_release,
-    "pelt",        "mean, var, meanvar",                  "changepoint",        "available",  NA_character_,
-    "binseg",      "mean, var, meanvar",                  "changepoint",        "available",  NA_character_,
-    "segneigh",    "mean, var, meanvar",                  "changepoint",        "available",  NA_character_,
-    "amoc",        "mean, var, meanvar",                  "changepoint",        "available",  NA_character_,
-    "np",          "distribution",                        "changepoint.np",     "available",  NA_character_,
-    "ecp",         "distribution (multivariate)",         "ecp",                "available",  NA_character_,
-    "fpop",        "mean",                                "fpop",               "available",  NA_character_,
-    "wbs",         "mean",                                "wbs",                "available",  NA_character_,
-    "wbs2",        "mean",                                "breakfast",          "available",  NA_character_,
-    "not",         "mean, var, slope",                    "not",                "available",  NA_character_,
-    "mosum",       "mean",                                "mosum",              "available",  NA_character_,
-    "idetect",     "mean",                                "IDetect",            "available",  NA_character_,
-    "tguh",        "mean",                                "breakfast",          "available",  NA_character_,
-    "smuce",       "mean (with CIs)",                     "stepR",              "available",  NA_character_,
-    "hsmuce",      "mean (heteroskedastic, with CIs)",    "stepR",              "available",  NA_character_,
-    "cpop",        "slope",                               "cpop",               "available",  NA_character_,
-    "bcp",         "mean (Bayesian)",                     "bcp",                "available",  NA_character_,
-    "bocpd",       "mean (Bayesian online)",              "ocp",                "available",  NA_character_,
-    "beast",       "mean/trend (Bayesian)",               "Rbeast",             "available",  NA_character_,
-    "cpm",         "distribution (sequential)",           "cpm",                "available",  NA_character_,
-    "kcp",         "running statistics (kernel)",         "kcpRS",              "available",  NA_character_,
-    "npmojo",      "distribution (multivariate)",         "CptNonPar",          "available",  NA_character_,
-    "decafs",      "mean (drift + AR noise)",             "DeCAFS",             "available",  NA_character_,
-    "sn",          "mean, var, acf, correlation",         "SNSeg",              "available",  NA_character_,
-    "inspect",     "mean (high-dimensional)",             "InspectChangepoint", "available",  NA_character_,
-    "ocd",         "mean (high-dimensional, online)",     "ocd",                "available",  NA_character_,
-    "geomcp",      "distribution (multivariate)",         "changepoint.geo",    "available",  NA_character_,
-    "strucchange", "mean, regression (with CIs)",         "strucchange",        "available",  NA_character_,
-    "segmented",   "slope (with CIs)",                    "segmented",          "available",  NA_character_,
-    "envcpt",      "mean/trend vs autocorrelation",       "EnvCpt",             "available",  NA_character_,
-    "fastcpd",     "mean, var, meanvar, AR/ARMA/GARCH",   "fastcpd",            "available",  NA_character_
-  )
+  full_registry()[, c("method", "change_in", "engine", "status",
+                      "target_release"), drop = FALSE]
 }
 
 change_in_mapping <- function(change_in) {
@@ -330,9 +670,17 @@ change_in_mapping <- function(change_in) {
 # Internal: change_in -> engine-specific argument translations
 #' @noRd
 not_contrast_for <- function(change_in) {
+  # `pcwsConstMeanVar` changes the mean AND the variance, and not_wrapper()
+  # labels its result `change_in = "meanvar"` for that reason -- so a "var"
+  # request produced a result whose own `change_in` was not in `not`'s
+  # `supports`, a value validate_method_change_in() would refuse and
+  # cpt_detect() could never be asked for. "meanvar" is now an accepted
+  # request routed to the same contrast, so the label the wrapper writes is
+  # one the registry lists.
   switch(change_in,
     mean = "pcwsConstMean",
     var = "pcwsConstMeanVar",
+    meanvar = "pcwsConstMeanVar",
     slope = "pcwsLinContMean",
     "pcwsConstMean"
   )
@@ -365,41 +713,12 @@ fastcpd_family_for <- function(change_in) {
 }
 
 # Internal: what each method can detect (used by validate_method_change_in).
+# Derived from the registry rather than repeated, so a new engine declares
+# its capabilities once.
 #' @noRd
 method_change_in_support <- function() {
-  list(
-    pelt = c("mean", "var", "meanvar"),
-    binseg = c("mean", "var", "meanvar"),
-    segneigh = c("mean", "var", "meanvar"),
-    amoc = c("mean", "var", "meanvar"),
-    np = "distribution",
-    ecp = "distribution",
-    fpop = "mean",
-    wbs = "mean",
-    wbs2 = "mean",
-    not = c("mean", "var", "slope"),
-    mosum = "mean",
-    idetect = "mean",
-    tguh = "mean",
-    smuce = "mean",
-    hsmuce = "mean",
-    cpop = "slope",
-    bcp = "mean",
-    bocpd = "mean",
-    beast = "mean",
-    cpm = c("distribution", "mean", "var"),
-    kcp = c("mean", "var"),
-    npmojo = "distribution",
-    decafs = "mean",
-    sn = c("mean", "var"),
-    inspect = "mean",
-    ocd = "mean",
-    geomcp = "distribution",
-    strucchange = "mean",
-    segmented = "slope",
-    envcpt = "mean",
-    fastcpd = c("mean", "var", "meanvar")
-  )
+  reg <- full_registry()
+  stats::setNames(reg$supports, reg$method)
 }
 
 # Validate that change_in is compatible with the requested method, erroring
@@ -430,10 +749,17 @@ validate_method_change_in <- function(method, change_in) {
 #' @noRd
 resolve_numeric_penalty <- function(penalty, n) {
   if (is.null(penalty)) return(NULL)
+  if (inherits(penalty, "ggcpt_penalty_model")) {
+    # cpt_detect() resolves a learned penalty up front; reaching here means a
+    # wrapper was called directly with one, and it has no series to predict
+    # from at this point.
+    stop("A learned penalty must be resolved against the series. Call ",
+         "cpt_detect(x, penalty = model), or predict(model, x) and pass the ",
+         "number.", call. = FALSE)
+  }
   if (is.numeric(penalty)) return(as.numeric(penalty))
   if (is.character(penalty)) {
-    if (penalty %in% c("BIC", "SIC", "MBIC", "AIC", "Hannan-Quinn", "None",
-                       "sSIC")) {
+    if (penalty %in% numeric_penalty_names()) {
       # k = 2 matches the Gaussian change-in-mean convention the
       # numeric-penalty engines use (fpop/cpop/DeCAFS default to
       # 2 * log(n) for BIC), so "BIC" means the same thing whether it is
@@ -444,6 +770,24 @@ resolve_numeric_penalty <- function(penalty, n) {
     return(NULL)
   }
   NULL
+}
+
+# Internal: the penalty names resolve_numeric_penalty() translates.
+#' @noRd
+numeric_penalty_names <- function() {
+  c("BIC", "SIC", "MBIC", "AIC", "Hannan-Quinn", "None", "sSIC")
+}
+
+# Internal: resolve a `penalty` argument that may be a learned model.
+# cpt_detect() does this up front, but the wrappers are exported and can be
+# called directly, and a model reaching an engine surfaces as "'list' object
+# cannot be coerced to type 'double'". Resolving here means
+# `fpop_wrapper(x, penalty = model)` simply works, on the same series the
+# wrapper is about to segment.
+#' @noRd
+resolve_penalty_model <- function(penalty, data_vec) {
+  if (!inherits(penalty, "ggcpt_penalty_model")) return(penalty)
+  unname(stats::predict(penalty, as.numeric(data_vec)))[1]
 }
 
 # Internal: describe a penalty argument as a list(type, value)
@@ -522,6 +866,10 @@ wrap_ecp_to_ggcpt <- function(x, ...) {
 #'   penalty additionally reads \code{k} as the number of changepoints being
 #'   placed, in its \eqn{\log{n \choose k}} term.
 #' @param value Numeric value for \code{Manual} type.
+#' @param series The series a learned penalty is predicted for. Required
+#'   only when \code{type} is a \code{ggcpt_penalty_model} from
+#'   \code{\link{cpt_learn_penalty}()}, in which case every other argument
+#'   is ignored and the model's prediction for this series is returned.
 #' @param alpha Exponent of the strengthened SIC (\code{"sSIC"}) penalty
 #'   \eqn{k (\log n)^\alpha}; must exceed 1. Defaults to \code{1.01}
 #'   (Fryzlewicz, 2014).
@@ -551,6 +899,17 @@ wrap_ecp_to_ggcpt <- function(x, ...) {
 #'     TGUH): use internal model-selection criteria (e.g., sSIC, threshold)
 #'     and generally \emph{ignore} the \code{penalty} argument. Specify
 #'     thresholds via the wrapper's own arguments.
+#'   \item \strong{\code{fastcpd}} takes its penalty as \code{beta}, on its
+#'     own scale, and defaults to its native \code{"MBIC"}.
+#'     \code{cpt_detect()} forwards a numeric \code{penalty} as
+#'     \code{beta}, and translates the three names the two packages share
+#'     (\code{"MBIC"}, \code{"BIC"}/\code{"SIC"}, \code{"MDL"}). Any other
+#'     character penalty (\code{"AIC"}, \code{"Hannan-Quinn"},
+#'     \code{"sSIC"}, \code{"None"}) has no \pkg{fastcpd} equivalent and
+#'     is left to the engine's default rather than being silently
+#'     approximated; pass \code{beta} yourself to pin it. Whatever is used
+#'     is recorded on the result, so \code{print()} and \code{glance()}
+#'     report the penalty of the fit in hand.
 #'   \item \strong{Inference/Bayesian methods} (\code{smuce}, \code{bcp},
 #'     \code{bocpd}, \code{beast}, \code{cpm}, \code{sn}): are tuned by a
 #'     significance level, posterior-probability threshold, hazard, or
@@ -560,11 +919,16 @@ wrap_ecp_to_ggcpt <- function(x, ...) {
 #'     changepoints can be placed in \code{n} observations,
 #'     \eqn{0.5(k+1)\log n + \log{n \choose k}}. It is deliberately stronger
 #'     than \code{"BIC"}. It is \emph{not} the modified BIC of Zhang and
-#'     Siegmund (2007), whose penalty
-#'     \eqn{1.5 k \log n + 0.5 \sum_i \log(l_i / n)} depends on the segment
-#'     lengths \eqn{l_i} and so cannot be expressed by a function of
-#'     \code{n} and \code{k} alone. Use the character \code{"MBIC"} with
-#'     \pkg{changepoint}-based methods to get the engine's native MBIC.
+#'     Siegmund (2007), whose penalty is
+#'     \eqn{1.5 k \log n + 0.5 \sum_i \log(l_i / n)} on the
+#'     \strong{log-likelihood} scale (equivalently
+#'     \eqn{3 k \log n + \sum_i \log(l_i / n)} on the deviance scale,
+#'     which is how \code{\link{cpt_select}()} states it and the scale its
+#'     \code{cost} column uses). It depends on the segment lengths
+#'     \eqn{l_i} and so cannot be expressed by a function of \code{n} and
+#'     \code{k} alone. Use the character \code{"MBIC"} with
+#'     \pkg{changepoint}-based methods to get the engine's native MBIC, and
+#'     \code{cpt_select(criterion = "mbic")} for the Zhang-Siegmund one.
 #' }
 #'
 #' @return A numeric penalty value.
@@ -574,7 +938,22 @@ wrap_ecp_to_ggcpt <- function(x, ...) {
 #' cpt_penalty("BIC", n = 100)
 #' cpt_penalty("AIC", n = 100)
 #' cpt_penalty("Manual", value = 5)
-cpt_penalty <- function(type, n = NULL, k = 1, value = NULL, alpha = 1.01) {
+cpt_penalty <- function(type, n = NULL, k = 1, value = NULL, alpha = 1.01,
+                        series = NULL) {
+  # A learned penalty is a model, not a name: predict it for this series and
+  # return the number, so `cpt_penalty()` remains the one place a penalty is
+  # turned into a value whatever its provenance.
+  if (inherits(type, "ggcpt_penalty_model")) {
+    if (is.null(series)) {
+      stop("A learned penalty depends on the series' features, so `series` ",
+           "must be supplied: cpt_penalty(model, series = x).", call. = FALSE)
+    }
+    # coerce_series_values(), not as.numeric(): the model predicts from
+    # features of this series, so a factor would have it predict a penalty
+    # for the level codes -- silently, since the answer is just a number.
+    return(unname(stats::predict(
+      type, coerce_series_values(series, arg = "series")))[1])
+  }
   type <- match.arg(type, c("None", "BIC", "SIC", "MBIC", "AIC",
                             "Hannan-Quinn", "sSIC", "Manual"))
 
@@ -606,6 +985,10 @@ cpt_penalty <- function(type, n = NULL, k = 1, value = NULL, alpha = 1.01) {
          "penalty (it counts the changepoints being placed among `n` ",
          "observations).", call. = FALSE)
   }
+  # `k` scales every one of these, and only MBIC checked it: a negative k
+  # returned a negative "penalty" that rewards changepoints, NA returned NA,
+  # and a vector returned a vector.
+  validate_scalar(k, "k", min = 0)
   # alpha <= 1 makes sSIC weaker than BIC, i.e. no longer the *strengthened*
   # SIC the argument names; the definition (Fryzlewicz 2014) requires
   # alpha > 1.

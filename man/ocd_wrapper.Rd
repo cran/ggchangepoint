@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-highdim.R
 \name{ocd_wrapper}
 \alias{ocd_wrapper}
-\title{ocd wrapper — online high-dimensional changepoint detection}
+\title{ocd wrapper: online high-dimensional changepoint detection}
 \usage{
 ocd_wrapper(
   x,
@@ -27,8 +27,8 @@ mean/sd (not monitored). Defaults to
 
 \item{thresh}{Threshold specification passed to
 \code{ocd::ChangepointDetector()}; \code{"MC"} (default) calibrates by
-Monte Carlo, which is what makes this the slowest wrapper — see the
-timing note below. Supplying the three thresholds directly, as a named
+Monte Carlo, which is what makes this the slowest wrapper (see the
+timing note below). Supplying the three thresholds directly, as a named
 numeric vector \code{c(diag =, off_d =, off_s =)}, skips calibration
 altogether.}
 
@@ -48,7 +48,12 @@ number of coordinates; see the timing note below.}
 \value{
 A \code{ggcpt} object. Because the detector is online, reported
   locations are \emph{declaration times} (the changepoint plus the
-  detection delay), stored together with a \code{declared_at} column.
+  detection delay). The \code{declared_at} column holds the same values
+  as \code{cp}, and deliberately: \pkg{ocd} declares a change without
+  also estimating where it began, so there is no separate location for
+  the second column to carry. Compare \code{\link{cpm_wrapper}()},
+  whose engine supplies both, and whose \code{cp} is an estimated
+  location with \code{detection_time} strictly later.
 }
 \description{
 Wraps the \code{ocd} package (Chen, Wang and Samworth, 2022): online
@@ -64,15 +69,21 @@ found.
 
 Nearly all of the run time is \code{ocd}'s Monte Carlo threshold
 calibration, which happens before a single observation is read. It is
-linear in \code{mc_reps} and grows with the number of coordinates:
-measured at \code{mc_reps = 5}, construction takes about 3 s at
-\eqn{p = 3}, 9 s at \eqn{p = 10} and 55 s at \eqn{p = 50}, and four
-times as long at \code{mc_reps = 20}. At the default \code{mc_reps = 100}
-that extrapolates to roughly a minute at \eqn{p = 3} and a quarter of an
-hour at \eqn{p = 50}. Monitoring the observations afterwards is cheap by
-comparison — well under a second for a thousand of them. Lower
-\code{mc_reps} while exploring, or pass \code{thresh} directly to skip
-calibration entirely.
+linear in \code{mc_reps} and grows with the number of coordinates. Timed
+on one Linux x86-64 machine at \code{mc_reps = 5}, construction took
+about 10 s at \eqn{p = 3}, 22 s at \eqn{p = 10} and 113 s at
+\eqn{p = 50}; raising \code{mc_reps} scales it linearly, so at
+\eqn{p = 3} it was 38 s at \code{mc_reps = 20} and 189 s at the default
+\code{mc_reps = 100}. The practical reading is that the default costs
+\emph{minutes} rather than seconds even for a handful of coordinates,
+and better than half an hour at \eqn{p = 50}. Another machine will give
+different absolute numbers; the linearity in \code{mc_reps} is the part
+to plan around. Monitoring the observations afterwards is cheap by
+comparison: 0.37 s for a thousand of them at \eqn{p = 3}. Lower
+\code{mc_reps} while exploring (the example below uses 2, which
+measures 3.8 s), or pass \code{thresh} directly to skip
+calibration entirely, which brings the same fit down to a tenth of a
+second.
 }
 
 \examples{
@@ -80,7 +91,12 @@ calibration entirely.
 \donttest{
 set.seed(2026)
 X <- rbind(matrix(rnorm(60 * 3), 60), matrix(rnorm(40 * 3, 3), 40))
-res <- ocd_wrapper(X, mc_reps = 5)
+# `mc_reps = 2`, not the default 100 and not the 5 this example used to
+# pass: the calibration is linear in `mc_reps` and is nearly all of the
+# cost, so 5 measured 9.7 s here against CRAN's 5 s budget and 2
+# measures 3.8 s for the same answer. Neither is a calibration you
+# would trust -- see the timing section above.
+res <- ocd_wrapper(X, mc_reps = 2)
 res$changepoints
 }
 \dontshow{\}) # examplesIf}
@@ -88,3 +104,49 @@ res$changepoints
 \references{
 \insertRef{chen2022ocd}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

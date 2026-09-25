@@ -15,7 +15,9 @@
 #' @param B Number of bootstrap replicates. Defaults to \code{100}.
 #' @param margin Tolerance (in indices) when counting a replicate detection
 #'   as a re-detection of a location. Defaults to \code{5}.
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to every \code{cpt_detect()} call.
 #' @return A \code{ggcpt_stability} object: a list with \code{frequency}
 #'   (a tibble of \code{index} and \code{freq}, the proportion of replicates
@@ -38,7 +40,7 @@ cpt_stability <- function(x, method = "pelt", B = 100, margin = 5,
   data_vec <- as_uni_vector(x, method)
   n <- length(data_vec)
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   original <- cpt_detect(data_vec, method = method, ...)
 
@@ -52,7 +54,15 @@ cpt_stability <- function(x, method = "pelt", B = 100, margin = 5,
     resampled <- resid
     for (s in seq_len(nrow(seg))) {
       idx <- which(seg_id == s)
-      resampled[idx] <- sample(resid[idx], length(idx), replace = TRUE)
+      # `sample.int()` on the index, not `sample()` on the values: R's
+      # classic pitfall is that `sample(x, n)` means `sample.int(x, n)` when
+      # `x` is a single number >= 1, so a one-observation segment resamples
+      # `1:round(resid)` instead of the residual itself. It is currently
+      # safe only by accident -- a length-1 segment's residual against its
+      # own mean is exactly 0, and `0 >= 1` is FALSE -- which couples this
+      # bootstrap to `param_estimate` staying the exact segment mean.
+      resampled[idx] <- resid[idx][sample.int(length(idx), length(idx),
+                                              replace = TRUE)]
     }
     rep_series <- fitted_step + resampled
     rep_cp <- tryCatch(
@@ -112,16 +122,26 @@ autoplot.ggcpt_stability <- function(object, ...) {
   freq <- object$frequency
   cp <- object$original$changepoints$cp
 
-  p <- ggplot2::ggplot(freq, ggplot2::aes(index, freq)) +
+  # This is the one plot in the package drawn against series position that
+  # did not honour a time index, so a dated series came back in positions
+  # here while autoplot(fit), ggcpt_statistic(), ggcpt_scale_space(),
+  # ggcpt_solution_path() and the influence and events plots all showed
+  # dates. plot_index() returns positions when there is no index, so an
+  # unindexed result is unchanged.
+  idx_vals <- plot_index(object$original)
+  d <- tibble::tibble(x = idx_vals[freq$index], freq = freq$freq)
+
+  p <- ggplot2::ggplot(d, ggplot2::aes(x, freq)) +
     ggplot2::geom_area(fill = "steelblue", alpha = 0.4) +
     ggplot2::geom_line(color = "steelblue") +
     ggplot2::scale_y_continuous(limits = c(0, 1)) +
-    ggplot2::labs(x = "Index", y = "Detection frequency",
+    ggplot2::labs(x = plot_index_label(object$original),
+                  y = "Detection frequency",
                   title = paste0("Changepoint stability (", object$B,
                                  " bootstrap replicates)"))
 
   if (length(cp) > 0) {
-    p <- p + ggplot2::geom_vline(xintercept = cp, color = "blue",
+    p <- p + ggplot2::geom_vline(xintercept = idx_vals[cp], color = "blue",
                                  linetype = "dashed", linewidth = 0.4)
   }
   p

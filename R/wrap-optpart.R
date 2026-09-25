@@ -1,7 +1,12 @@
-#' FPOP wrapper — Functional Pruning Optimal Partitioning
+#' FPOP wrapper: Functional Pruning Optimal Partitioning
 #'
 #' Wraps the \code{fpop} package for optimal changepoint detection via
 #' functional pruning.
+#'
+#' \pkg{fpop} was archived from CRAN in 2026 at its maintainer's request and
+#' is still built on R-Forge, where it is developed. Install it with
+#' \code{install.packages("fpop", repos = "https://R-Forge.R-project.org")},
+#' or with \code{cpt_install_engines("core")}.
 #'
 #' @param x A numeric vector.
 #' @param penalty Penalty value. Defaults to \code{2 * log(length(x))} (BIC).
@@ -16,16 +21,32 @@
 #'   two entry points need not agree unless \code{penalty} is given.
 #' @param ... Additional arguments passed to \code{fpop::Fpop()}.
 #' @return A \code{ggcpt} object.
+#' @references
+#' \insertRef{maidstone2017optimal}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("fpop", quietly = TRUE)
+#' set.seed(2026)
+#' x <- c(rnorm(60), rnorm(60, 4))
+#' fpop_wrapper(x)$changepoints
+#' # the default penalty assumes sd 1; scale it for wider noise
+#' y <- 5 * x
+#' fpop_wrapper(y, penalty = log(length(y)) * var(diff(y)))$changepoints
 fpop_wrapper <- function(x, penalty = NULL, ...) {
 
   need_pkg("fpop")
+  reject_renamed_args(list(...), "fpop")
   validate_data(x)
   data_vec <- as_uni_vector(x, "fpop")
 
+  # As in cpop_wrapper() and decafs_wrapper(): "Manual" is for a number the
+  # caller supplied, and this wrapper's own default was reported as one.
+  pen_type <- if (is.null(penalty)) "2log(n) [wrapper default]" else "Manual"
+  penalty <- resolve_penalty_model(penalty, data_vec)
   if (is.null(penalty)) {
     penalty <- 2 * log(length(data_vec))
   }
+  validate_scalar(penalty, "penalty", min = 0)
 
   fit <- fpop::Fpop(data_vec, lambda = penalty, ...)
   cp_indices <- as.integer(fit$t.est)
@@ -34,7 +55,7 @@ fpop_wrapper <- function(x, penalty = NULL, ...) {
     data_vec, cp_indices,
     method = "fpop",
     change_in = "mean",
-    penalty = list(type = "Manual", value = penalty),
+    penalty = list(type = pen_type, value = penalty),
     fit = fit,
     call = match.call()
   )

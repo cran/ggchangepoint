@@ -47,8 +47,8 @@ their documentation.
 With \code{change_in = "mean"} the upstream Normal cost assumes a noise
 standard deviation of 1 and the penalty is compared against the raw
 residual sum of squares, so a series with wider noise is under-penalised
-and over-segmented: 29 changepoints instead of 1 at \eqn{\sigma = 3} in a
-measured example. Standardise the series first, or use
+and over-segmented: about 39 changepoints instead of 1 at
+\eqn{\sigma = 3} on 200 observations (mean over 20 draws). Standardise the series first, or use
 \code{change_in = "mean_var"}, which estimates a variance per segment and
 is unaffected. See the scale-sensitivity section of
 \code{\link{cpt_detect}}.
@@ -63,3 +63,49 @@ cpt_wrapper(c(rnorm(100,0,1),rnorm(100,10,1)))
 \references{
 \insertRef{killick2014changepoint}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

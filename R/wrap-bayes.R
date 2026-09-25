@@ -13,7 +13,10 @@
 #'   which a location is reported as a changepoint. Defaults to \code{0.5}.
 #' @param burnin Number of burn-in MCMC iterations. Defaults to \code{50}.
 #' @param mcmc Number of post-burn-in MCMC iterations. Defaults to \code{500}.
-#' @param seed Optional seed for reproducibility of the MCMC run.
+#' @param seed Optional seed for reproducibility of the MCMC run. The seed
+#'   is scoped to this call: \code{.Random.seed} is saved and restored, so a
+#'   seeded call inside a simulation loop does not pin the loop's own
+#'   stream.
 #' @param ... Additional arguments passed to \code{bcp::bcp()}.
 #' @return A \code{ggcpt} object. The \code{changepoints} tibble carries a
 #'   \code{posterior_prob} column, and the \code{data} tibble carries the
@@ -27,9 +30,20 @@
 #' res <- bcp_wrapper(c(rnorm(60), rnorm(60, 4)), seed = 2026)
 #' res$changepoints
 #' ggcpt_posterior(res)
+#' @family changepoint engines
 bcp_wrapper <- function(x, prob_threshold = 0.5, burnin = 50, mcmc = 500,
                         seed = NULL, ...) {
   need_pkg("bcp")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(burnin, "burnin", min = 1)
+  # Missed by that measurement: `mcmc = 0`, `-1` or a vector ran and
+  # reported no changepoints, and `mcmc = NA` failed with "negative length
+  # vectors are not allowed".
+  validate_scalar(mcmc, "mcmc", min = 1)
 
   validate_data(x)
   validate_scalar(prob_threshold, "prob_threshold", min = 0, max = 1,
@@ -40,9 +54,12 @@ bcp_wrapper <- function(x, prob_threshold = 0.5, burnin = 50, mcmc = 500,
     stop("`x` must have at least 4 observations for the bcp engine.",
          call. = FALSE)
   }
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
-  fit <- bcp::bcp(data_vec, burnin = burnin, mcmc = mcmc, ...)
+  # Loading bcp attaches `package:bcp` and `package:grid`; a detection call
+  # should not change where the caller's names resolve from.
+  fit <- with_search_path_restored(
+    bcp::bcp(data_vec, burnin = burnin, mcmc = mcmc, ...))
 
   # bcp's posterior.prob[i] is the posterior probability of a changepoint
   # between i and i + 1, i.e. location i in the "left" convention. The last
@@ -74,9 +91,10 @@ bcp_wrapper <- function(x, prob_threshold = 0.5, burnin = 50, mcmc = 500,
 #' can draw the signature run-length heatmap.
 #'
 #' @param x A numeric vector.
-#' @param hazard Constant hazard rate \eqn{1/\lambda} of the change process;
-#'   larger \code{hazard} values mean changes are expected less often.
-#'   Defaults to \code{100} (the upstream default).
+#' @param hazard The \eqn{\lambda} of \pkg{ocp}'s constant hazard: the
+#'   expected run length between changes, so the hazard rate itself is
+#'   \eqn{1/\lambda} and larger values mean changes are expected less
+#'   often. Defaults to \code{100} (the upstream default).
 #' @param ... Additional arguments passed to \code{ocp::onlineCPD()}.
 #' @return A \code{ggcpt} object with the MAP changepoint set. The full
 #'   \code{ocp} fit (including the run-length posterior) is kept in
@@ -88,8 +106,14 @@ bcp_wrapper <- function(x, prob_threshold = 0.5, burnin = 50, mcmc = 500,
 #' res <- bocpd_wrapper(c(rnorm(60), rnorm(60, 4)))
 #' res$changepoints
 #' ggcpt_runlength(res)
+#' @family changepoint engines
 bocpd_wrapper <- function(x, hazard = 100, ...) {
   need_pkg("ocp")
+  reject_renamed_args(list(...), "bocpd")
+  reject_managed_args(list(...), "bocpd", c(
+    getR = paste("the wrapper needs the run-length posterior to report",
+                 "changepoint probabilities and to draw",
+                 "`ggcpt_runlength()`")))
   validate_scalar(hazard, "hazard", min = 0, min_open = TRUE)
 
   validate_data(x)
@@ -115,7 +139,7 @@ bocpd_wrapper <- function(x, hazard = 100, ...) {
   )
 }
 
-#' BEAST wrapper — Bayesian estimation of abrupt change, seasonality, and trend
+#' BEAST wrapper: Bayesian estimation of abrupt change, seasonality, and trend
 #'
 #' Wraps \code{Rbeast::beast()} (Zhao et al., 2019), a Bayesian
 #' model-averaging ensemble that estimates the number and location of trend
@@ -128,7 +152,9 @@ bocpd_wrapper <- function(x, hazard = 100, ...) {
 #' @param prob_threshold Posterior probability cutoff in \eqn{(0, 1)} above
 #'   which a candidate trend changepoint is reported. Defaults to \code{0.5}.
 #' @param seed Optional seed for the engine's MCMC sampler (passed to
-#'   \code{Rbeast::beast()} as \code{mcmc.seed}).
+#'   \code{Rbeast::beast()} as \code{mcmc.seed}). The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to \code{Rbeast::beast()}.
 #' @return A \code{ggcpt} object. The \code{changepoints} tibble carries
 #'   \code{posterior_prob}, and the \code{data} tibble carries the posterior
@@ -137,11 +163,21 @@ bocpd_wrapper <- function(x, hazard = 100, ...) {
 #' \insertRef{zhao2019beast}{ggchangepoint}
 #' @export
 #' @examplesIf requireNamespace("Rbeast", quietly = TRUE) && .Platform$OS.type != "windows"
-#' res <- beast_wrapper(c(rnorm(60), rnorm(60, 4)), seed = 2026)
-#' res$changepoints
+#' # try(): Rbeast intermittently returns an all-NaN fit and the condition
+#' # can persist for a session, so a check must not fail on it -- the
+#' # wrapper reports it by name when it happens.
+#' res <- try(beast_wrapper(c(rnorm(60), rnorm(60, 4)), seed = 2026),
+#'            silent = TRUE)
+#' if (!inherits(res, "try-error")) res$changepoints
+#' @family changepoint engines
 beast_wrapper <- function(x, prob_threshold = 0.5, seed = NULL, ...) {
   need_pkg("Rbeast")
-
+  reject_managed_args(list(...), "beast", c(
+    season = paste("the wrapper runs Rbeast in trend-only mode; a seasonal",
+                   "decomposition changes what the reported breakpoints",
+                   "mean"),
+    quiet = "the wrapper keeps the engine's console narration out of the result",
+    print.progress = "the wrapper keeps the engine's progress bar out of the result"))
   validate_data(x)
   validate_scalar(prob_threshold, "prob_threshold", min = 0, max = 1,
                   min_open = TRUE)
@@ -153,24 +189,48 @@ beast_wrapper <- function(x, prob_threshold = 0.5, seed = NULL, ...) {
   # mcmc.seed (0 means "random").
   if (!is.null(seed)) args$mcmc.seed <- seed
   fit <- do.call(Rbeast::beast, args)
-  # Rbeast (<= 1.0.2) intermittently returns an all-NaN fit -- measured at
-  # roughly 0.7% of calls, and more often when other compiled engines are
-  # loaded in the same session. A retry recovers it, so retry a few times
-  # (each is cheap) and only then fail loudly, rather than reporting "no
+  # Rbeast (<= 1.0.2) intermittently returns an all-NaN fit. The rate is not
+  # quotable: re-measured across fresh processes on one identical series it
+  # was 0 of 8, 1 of 8, 1 of 10 and 30 of 30, so a session either mostly
+  # works or mostly does not, and an earlier note here claiming "roughly
+  # 0.7% of calls" was reporting one session as if it were a rate. A retry
+  # recovers it often enough to be worth trying -- and sometimes not at
+  # all: five consecutive attempts failed in one session. So retry a few
+  # times (each is cheap) and then fail loudly, rather than reporting "no
   # changepoints" from a broken fit. The perturbed call in between is there
   # because identical retries can stay stuck.
+  #
+  # Three explanations measured and refuted, so they are not re-chased.
+  # (1) Other compiled engines loaded in the same session: an earlier note
+  # blamed these, but a session with 66 namespaces loaded ran 5 of 5 seeds
+  # clean. (2) `do.call()` inlining the whole series into the call object,
+  # which is a real hazard this package avoids elsewhere: inline and
+  # quoted-symbol forms were both 10 of 10 clean while a plain direct call
+  # produced the all-NaN in the same process. (3) `mcmc.seed`, and the
+  # chain configuration generally: `mcmc.chains`, `mcmc.samples` and
+  # `mcmc.burnin` all gave a finite fit on every seed that had just failed
+  # through the wrapper.
+  # With `mcmc.seed` set from `seed`, every retry runs the same chain, so a
+  # SEEDED call that hits the bug has less variation to recover from than an
+  # unseeded one -- the perturbed call in between is doing all the work.
+  # Vary the perturbation across attempts so the seeded case is not just the
+  # same call six times.
   attempt <- 1
   while (!is.finite(fit$trend$ncp) && attempt < 6) {
     perturbed <- args
     perturbed$dump.ci <- TRUE
+    perturbed$mcmc.seed <- attempt
     try(do.call(Rbeast::beast, perturbed), silent = TRUE)
     fit <- do.call(Rbeast::beast, args)
     attempt <- attempt + 1
   }
   if (!is.finite(fit$trend$ncp)) {
-    stop("Rbeast::beast() returned an invalid (all-NaN) fit repeatedly; ",
-         "this is an intermittent upstream issue - retry the call.",
-         call. = FALSE)
+    stop("Rbeast::beast() returned an invalid (all-NaN) fit on ", attempt,
+         " attempts. This is an intermittent upstream issue, and it is not ",
+         "always transient: it can persist for the rest of an R session, ",
+         "so a fresh session is a better bet than another call. Measured ",
+         "rates across sessions on one identical series ranged from 0 to ",
+         "100 percent.", call. = FALSE)
   }
 
   # beast reports candidate changepoints (most probable first) as the first

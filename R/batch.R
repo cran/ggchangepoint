@@ -1,6 +1,6 @@
 #' Batch changepoint detection over many series
 #'
-#' Runs one detector over every series in a collection — the panel-data loop
+#' Runs one detector over every series in a collection: the panel-data loop
 #' that methodological and applied work both need constantly. Accepts a
 #' matrix/data frame (one column per series) or a named list of numeric
 #' vectors. Honours \code{future::plan()} for parallel execution when the
@@ -12,15 +12,36 @@
 #' @param method Detection method, passed to \code{\link{cpt_detect}()}.
 #' @param change_in What to detect change in, passed to
 #'   \code{\link{cpt_detect}()}.
+#' @param index Optional time index shared by every series in the panel (a
+#'   vector of dates, say), or a named list of one index per series. A list
+#'   has to cover every series, with indices of one type, because
+#'   \code{tidy()} and \code{autoplot()} stack them into one table and one
+#'   axis. Carried onto each result and used by \code{tidy()} and \code{autoplot()}, so a
+#'   faceted plot of fifty series shows dates rather than positions.
 #' @param seed Optional seed for reproducible parallel execution (passed to
 #'   \code{future.apply::future_lapply()} as \code{future.seed}; applied via
-#'   \code{set.seed()} when running sequentially).
+#'   \code{set.seed()} when running sequentially). The seed is scoped to
+#'   this call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
+#' @param keep_fit Keep each engine's raw fit in \code{result[[i]]$fit}?
+#'   Defaults to \code{TRUE}, which is what makes a batch result as
+#'   inspectable as a single one. Set it to \code{FALSE} for a large panel:
+#'   a few engines return fits far bigger than the data they were given.
+#'   \code{strucchange} keeps a triangular \eqn{O(n^2)} RSS matrix, so a
+#'   single 2000-point series costs about 135 MB, and \code{bfast} and
+#'   \code{bocpd} are in the tens of MB, and a panel multiplies that by the
+#'   number of series. Everything else on the object, including
+#'   \code{tidy()} and \code{autoplot()}, is unaffected; only accessors
+#'   that read \code{$fit} (\code{cpt_statistic()},
+#'   \code{ggcpt_posterior()}, \code{cpt_confint(engine = \"native\")})
+#'   need it.
 #' @param ... Additional arguments passed to every \code{cpt_detect()} call.
 #' @return A \code{ggcpt_batch} object: a tibble with one row per series and
 #'   columns \code{series}, \code{n_changepoints}, \code{changepoints} (a
 #'   list-column of tidy tibbles), and \code{result} (a list-column of
 #'   \code{ggcpt} objects). Methods: \code{print()}, \code{tidy()} (one row
-#'   per changepoint across all series), and \code{autoplot()} (faceted
+#'   per changepoint across all series, with columns \code{series},
+#'   \code{cp} and \code{cp_value}), and \code{autoplot()} (faceted
 #'   small-multiples with each series' changepoints).
 #' @export
 #' @examples
@@ -30,10 +51,53 @@
 #' batch
 #' tidy(batch)
 #' ggplot2::autoplot(batch)
-cpt_batch <- function(x, method = "pelt", change_in = "mean", seed = NULL,
-                      ...) {
+cpt_batch <- function(x, method = "pelt", change_in = "mean", index = NULL,
+                      seed = NULL, keep_fit = TRUE, ...) {
+  validate_flag(keep_fit, "keep_fit")
   series_list <- if (is.list(x) && !is.data.frame(x)) {
-    lapply(x, as.numeric)
+    if (length(x) == 0L) {
+      stop("`x` is empty: `cpt_batch()` needs at least one series.",
+           call. = FALSE)
+    }
+    # coerce_series_values(), not a bare as.numeric(): a factor coerces to
+    # its LEVEL CODES -- an alphabetical ordering of the labels rather than
+    # the data -- and a character vector to NAs, both silently. cpt_detect()
+    # has refused those since 0.4.0; cpt_batch() reached the engine through
+    # `as.numeric()` and so accepted a whole panel of them, reporting
+    # changepoints in the label ordering. The series name goes into the
+    # message because a panel is exactly where "which one?" is the question.
+    stats::setNames(lapply(seq_along(x), function(i) {
+      nm <- names(x)[i] %||% ""
+      label <- paste0("Series ", if (nzchar(nm)) paste0("`", nm, "` ") else "",
+                      "(", i, " of ", length(x), ")")
+      xi <- x[[i]]
+      # A panel is documented as "a list of numeric vectors", and that is
+      # load-bearing: as.numeric() on a matrix unrolls it column after
+      # column, so an 80x2 member became a 160-point series and reported a
+      # changepoint at index 80 -- the seam where the second column was
+      # appended, which the data does not contain. One column is exempt
+      # because unrolling it changes nothing.
+      if (is.matrix(xi) || is.data.frame(xi)) {
+        withCallingHandlers(
+          reject_multicolumn(xi, "x",
+                             paste("Pass a multivariate series to",
+                                   "cpt_detect() directly, or split the",
+                                   "columns into separate panel members.")),
+          error = function(e) {
+            stop(label, ": ", conditionMessage(e), call. = FALSE)
+          })
+        return(withCallingHandlers(
+          as_mv_matrix(xi, arg = "x")[, 1],
+          error = function(e) {
+            stop(label, ": ", conditionMessage(e), call. = FALSE)
+          }))
+      }
+      withCallingHandlers(
+        coerce_series_values(xi),
+        error = function(e) {
+          stop(label, ": ", conditionMessage(e), call. = FALSE)
+        })
+    }), names(x))
   } else {
     X <- as_mv_matrix(x)
     stats::setNames(lapply(seq_len(ncol(X)), function(j) X[, j]),
@@ -55,10 +119,56 @@ cpt_batch <- function(x, method = "pelt", change_in = "mean", seed = NULL,
   # Name the offending series when one of them fails. A panel can hold
   # hundreds; "`x` must have at least 3 observations" on its own leaves the
   # user to bisect the list to find which.
+  # One index for the whole panel, or one per series. A named list is
+  # matched by name so the caller does not have to keep the order straight.
+  #
+  # A POSIXlt is a list internally, so is.list() read a shared POSIXlt
+  # index as a per-series list and handed each series one of its
+  # components (seconds, minutes, ...). Converted up front, it is the
+  # vector it means to be.
+  if (inherits(index, "POSIXlt")) index <- as.POSIXct(index)
+  index_for <- function(i) {
+    if (is.null(index)) return(NULL)
+    if (is.list(index)) {
+      nm <- names(series_list)[i]
+      if (!is.null(names(index)) && nm %in% names(index)) return(index[[nm]])
+      if (length(index) >= i) return(index[[i]])
+      return(NULL)
+    }
+    index
+  }
+
+  # A per-series list that skips a series, or mixes index types, cannot be
+  # stacked: tidy() and autoplot() both failed on it with base R's
+  # "numbers of columns of arguments do not match", naming nothing. Refuse
+  # it here, where the series can be named.
+  if (is.list(index)) {
+    have <- vapply(seq_along(series_list),
+                   function(i) !is.null(index_for(i)), logical(1))
+    if (!all(have)) {
+      miss <- names(series_list)[!have]
+      stop("`index` is a list, so it gives one index per series, but it has ",
+           "none for ", length(miss), " of ", length(series_list), ": ",
+           paste(utils::head(miss, 3), collapse = ", "),
+           if (length(miss) > 3) ", ..." else "", ". Supply one for every ",
+           "series, or pass one vector shared by the whole panel.",
+           call. = FALSE)
+    }
+    kinds <- unique(vapply(seq_along(series_list), function(i) {
+      class(index_for(i))[1]
+    }, character(1)))
+    if (length(kinds) > 1L) {
+      stop("`index` mixes index types across series (",
+           paste(kinds, collapse = ", "), "); tidy() and autoplot() stack ",
+           "them into one column and one axis, so they must share one.",
+           call. = FALSE)
+    }
+  }
+
   run_one <- function(i) {
     tryCatch(
       cpt_detect(series_list[[i]], method = method, change_in = change_in,
-                 ...),
+                 index = index_for(i), ...),
       error = function(e) {
         stop("Series `", names(series_list)[i], "` (", i, " of ",
              length(series_list), "): ", conditionMessage(e), call. = FALSE)
@@ -66,14 +176,26 @@ cpt_batch <- function(x, method = "pelt", change_in = "mean", seed = NULL,
     )
   }
 
+  # Above the branch, not inside the sequential one. future.apply documents
+  # that for every `future.seed` value except FALSE/NULL "the RNG state of
+  # the calling R process after this function returns is guaranteed to be
+  # forwarded one step" -- so the parallel path perturbs `.Random.seed` too,
+  # and `@param seed` promises the opposite ("scoped to this call ...  a
+  # seeded call inside a simulation loop does not pin the loop's own
+  # stream"). local_seed() registers the restore on the caller's frame, so
+  # registering it here covers both paths.
+  local_seed(seed)
   results <- if (has_future) {
-    future.apply::future_lapply(seq_along(series_list), run_one,
+    future.apply::future_lapply(seq_along(series_list),
+                                with_session_registry(run_one),
                                 future.seed = seed %||% TRUE)
   } else {
-    if (!is.null(seed)) set.seed(seed)
     lapply(seq_along(series_list), run_one)
   }
   names(results) <- names(series_list)
+  if (!keep_fit) {
+    results <- lapply(results, function(r) { r$fit <- NULL; r })
+  }
 
   out <- tibble::tibble(
     series = names(series_list),
@@ -101,10 +223,16 @@ print.ggcpt_batch <- function(x, ...) {
 #' @rdname cpt_batch
 #' @export
 tidy.ggcpt_batch <- function(x, ...) {
+  has_index <- any(vapply(x$result, function(r) !is.null(r$index),
+                          logical(1)))
+  keep <- if (has_index) c("cp", "cp_index", "cp_value") else {
+    c("cp", "cp_value")
+  }
   out <- do.call(rbind, lapply(seq_len(nrow(x)), function(i) {
     cp <- x$changepoints[[i]]
     if (nrow(cp) == 0) return(NULL)
-    tibble::add_column(cp[, c("cp", "cp_value")], series = x$series[i],
+    cols <- intersect(keep, names(cp))
+    tibble::add_column(cp[, cols, drop = FALSE], series = x$series[i],
                        .before = 1)
   }))
   out %||% tibble::tibble(series = character(), cp = integer(),
@@ -115,27 +243,36 @@ tidy.ggcpt_batch <- function(x, ...) {
 #' @export
 autoplot.ggcpt_batch <- function(object, ...) {
   panel_data <- do.call(rbind, lapply(seq_len(nrow(object)), function(i) {
-    d <- object$result[[i]]$data[, c("index", "value")]
+    res <- object$result[[i]]
+    d <- tibble::tibble(index = plot_index(res), value = res$data$value)
     d$series <- object$series[i]
     d
   }))
   series_levels <- make.unique(as.character(object$series))
   panel_data$series <- factor(panel_data$series, levels = series_levels)
+  x_lab <- plot_index_label(object$result[[1]])
 
   cp_data <- tidy.ggcpt_batch(object)
 
   p <- ggplot2::ggplot(panel_data, ggplot2::aes(index, value)) +
     ggplot2::geom_line(color = "grey40") +
     ggplot2::facet_wrap(~series, scales = "free_y") +
-    ggplot2::labs(x = "Index", y = "Value",
+    ggplot2::labs(x = x_lab, y = "Value",
                   title = paste0("Batch changepoint detection (",
                                  attr(object, "method") %||% "?", ")"))
 
   if (nrow(cp_data) > 0) {
     cp_data$series <- factor(cp_data$series, levels = series_levels)
+    # The rule has to be on the same scale as the panel, which is the time
+    # index when the results carry one.
+    cp_data$.at <- if ("cp_index" %in% names(cp_data)) {
+      cp_data$cp_index
+    } else {
+      cp_data$cp
+    }
     p <- p + ggplot2::geom_vline(
       data = cp_data,
-      ggplot2::aes(xintercept = cp),
+      ggplot2::aes(xintercept = .at),
       color = "blue", linewidth = 0.4
     )
   }

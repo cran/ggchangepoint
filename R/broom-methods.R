@@ -31,6 +31,58 @@ tidy.ggcpt <- function(x, ...) {
   x$changepoints
 }
 
+#' Tidy the significance regions of a ggcpt object
+#'
+#' The interval-valued methods (currently \code{\link{nsp_wrapper}()})
+#' return regions rather than points: each is guaranteed to contain at least
+#' one changepoint at a prescribed \emph{global} significance level. A
+#' region is a different object from a confidence interval around an
+#' estimate, so it lives in its own slot and has its own accessor rather
+#' than being folded into \code{tidy()}.
+#'
+#' @param x A \code{ggcpt} object.
+#' @return A tibble with columns \code{start}, \code{end} (positions),
+#'   \code{length}, and, when the result carries a time index,
+#'   \code{start_index}/\code{end_index} on the original scale. Any further
+#'   columns the engine supplied are carried through after those:
+#'   \code{\link{nsp_wrapper}()} adds \code{value}, the region's statistic.
+#'   A zero-row tibble when the result carries no regions.
+#' @seealso \code{\link{nsp_wrapper}()}, \code{\link{geom_cpt_region}()},
+#'   \code{\link{cpt_confint}()}.
+#' @export
+#' @examples
+#' set.seed(2026)
+#' fit <- as_ggcpt(50, c(rnorm(50), rnorm(50, 4)),
+#'                 regions = data.frame(start = 45, end = 56))
+#' cpt_regions(fit)
+cpt_regions <- function(x) {
+  if (!is_ggcpt(x)) {
+    stop("`x` must be a ggcpt object.", call. = FALSE)
+  }
+  reg <- x$regions
+  if (is.null(reg) || nrow(reg) == 0) {
+    # The same columns a non-empty return would have, so
+    # rbind(cpt_regions(a), cpt_regions(b)) works when one of the two is
+    # empty and the other is indexed. empty_confint() already does this,
+    # and ?alarms advertises the property.
+    out <- tibble::tibble(start = integer(), end = integer(),
+                          length = integer())
+    # `[[..., exact = TRUE]]`, not `$`: a tibble warns "Unknown or
+    # uninitialised column" when asked for a column it does not have.
+    if ("index_value" %in% names(x$data)) {
+      iv <- x$data[["index_value", exact = TRUE]]
+      out$start_index <- iv[0]
+      out$end_index <- iv[0]
+    }
+    return(out)
+  }
+  out <- tibble::as_tibble(reg)
+  out$length <- out$end - out$start + 1L
+  front <- intersect(c("start", "end", "length", "start_index", "end_index"),
+                     names(out))
+  out[, c(front, setdiff(names(out), front)), drop = FALSE]
+}
+
 #' Glance at a ggcpt object
 #'
 #' Returns a one-row summary of a changepoint detection result.
@@ -52,13 +104,13 @@ tidy.ggcpt <- function(x, ...) {
 #' the same thing:
 #' \itemize{
 #'   \item \code{"binseg"} and \code{"segneigh"}, whose \code{cpt.range}
-#'     fits report the raw within-segment cost instead — for one and the same
+#'     fits report the raw within-segment cost instead: for one and the same
 #'     segmentation that is 219.7 where a PELT fit reports 659.9;
 #'   \item \code{"np"}, because \pkg{changepoint.np} defines no
 #'     \code{logLik} method;
 #'   \item a change in \emph{mean} under the default \code{"MBIC"} penalty.
-#'     Loading \pkg{changepoint.np} — which this package imports, so it is
-#'     always loaded — replaces \pkg{changepoint}'s \code{logLik} method for
+#'     Loading \pkg{changepoint.np} (which this package imports, so it is
+#'     always loaded) replaces \pkg{changepoint}'s \code{logLik} method for
 #'     \code{cpt} objects with one that errors on exactly that combination.
 #'     Any other penalty (\code{"BIC"}, \code{"AIC"}, a numeric value)
 #'     reports normally, as do \code{change_in = "var"} and
@@ -72,14 +124,23 @@ glance.ggcpt <- function(x, ...) {
         identical(cpt_test_stat(x$fit), "Normal")) {
       # changepoint's logLik() returns c(`-2*logLik`, `-2*logLik + pen`);
       # report the unpenalised first element, which is already a cost (do not
-      # negate it). The two guards above keep values that are NOT on that
-      # scale out of the column: a `cpt.range` fit (BinSeg, SegNeigh) returns
-      # the raw within-segment cost instead -- for one and the same
-      # segmentation that is 219.7 where a PELT fit reports 659.9 -- and the
-      # non-Normal test statistics warn "Not changed to be -2*logLik" for the
-      # same reason. It also skips cpt.np() fits, which carry the `cpt` class
-      # but have no logLik method, so asking would print "Calculating
-      # parameter estimates..." and then error.
+      # negate it). Verified against changepoint's own output: under a BIC
+      # penalty the pair is (544.4, 555.0), i.e. the second element is the
+      # first plus the penalty, and `change_in = "var"` and `"meanvar"` both
+      # report on the same scale.
+      #
+      # The two guards above keep values that are NOT on that scale out of
+      # the column. A `cpt.range` fit (BinSeg, SegNeigh) returns the raw
+      # within-segment cost instead -- for one and the same segmentation,
+      # cpt at 100, BinSeg reported 178.1 where PELT reported 544.4 -- and
+      # it is that path, not the test statistic, which warns "Not changed
+      # to be -2*logLik". A non-Normal test statistic does not warn at all:
+      # CUSUM and CSS *error* with "logLik is only valid for distributional
+      # assumptions", which is why they are excluded by name rather than
+      # relied on to warn. cpt.np() fits are skipped for a third reason:
+      # they carry the `cpt` class but describe no distributional
+      # changepoint type, so logLik() rejects them with "Unknown
+      # changepoint type".
       #
       # `logLik` is deliberately unqualified: the method for `cpt` is an S4
       # method owned by changepoint, which this package @imports, so plain
@@ -94,9 +155,15 @@ glance.ggcpt <- function(x, ...) {
         },
         error = function(e) NA_real_
       )
-    } else if (is.list(x$fit)) {
+    } else if (is.list(x$fit) && !is.data.frame(x$fit)) {
       # Exact [[ ]] subsetting: $ would partial-match unrelated elements
-      # (e.g. DeCAFS's costFunction).
+      # (e.g. DeCAFS's costFunction). And NOT a data frame: one IS a list,
+      # and fchange_run() stores a frame directly as $fit, so a frame that
+      # ever acquired a `value` column would make `cand` the whole COLUMN
+      # -- whose last element the reconciliation below would then report as
+      # the model's total cost. (The length > 1 case is kept for fpop,
+      # which genuinely exposes a per-position cost vector whose terminal
+      # element IS the total; a data frame column is not that.)
       cand <- x$fit[["cost"]] %||% x$fit[["loss"]] %||% x$fit[["value"]]
       if (!is.null(cand) && is.numeric(cand)) total_cost <- cand
     }
@@ -144,17 +211,49 @@ glance.ggcpt <- function(x, ...) {
 #'
 #' @param x A \code{ggcpt} object.
 #' @param ... Additional arguments (ignored).
-#' @return A tibble with the original data plus augment columns.
+#' @return A tibble with one row per observation: the data as the result
+#'   carries it, plus four added columns. The data half depends on the
+#'   result: \code{index} and \code{value} for a univariate one,
+#'   \code{index} plus \strong{one column per coordinate} (named as the
+#'   input's columns were) for a multivariate one, and an extra
+#'   \code{fitted} column for the engines that supply their own fitted
+#'   signal. The added four are always the same:
+#'   \describe{
+#'     \item{\code{seg_id}}{which segment the observation falls in,
+#'       counting from 1.}
+#'     \item{\code{.fitted}}{the segment's \code{param_estimate}: the
+#'       segment \strong{mean}, for every method in the package, or the
+#'       engine's own fitted signal where there is one. See the details
+#'       below for the multivariate case.}
+#'     \item{\code{.resid}}{\code{value - .fitted}, against the
+#'       univariate series the result carries.}
+#'     \item{\code{is_changepoint}}{\code{TRUE} at each detected
+#'       location, under the result's \code{cp_convention}.}
+#'   }
+#'   Measured on a \code{pelt} fit the columns are \code{index},
+#'   \code{value}, \code{seg_id}, \code{.fitted}, \code{.resid},
+#'   \code{is_changepoint}.
 #'
 #' @details
 #' For a multivariate result every coordinate is returned, but the
 #' changepoints are shared across them, so \code{seg_id} and
 #' \code{is_changepoint} apply to the whole row while \code{.fitted} and
-#' \code{.resid} describe the \emph{first} coordinate only — the same
-#' coordinate \code{$segments$param_estimate} summarises. When an engine
-#' supplies its own fitted signal (SMUCE, DeCAFS, cpop, segmented, bcp,
-#' beast) that signal is used for \code{.fitted} in place of the segment
-#' means.
+#' \code{.resid} describe the \strong{univariate series the result
+#' carries}: \code{$data$value}, the same series
+#' \code{$segments$param_estimate} summarises, so \code{.resid} is always
+#' \code{value - .fitted}. For most multivariate engines that series is
+#' the first coordinate; \code{fmean}, \code{fcov}, \code{kwc} and
+#' \code{fabisearch} store the cross-sectional mean \code{rowMeans()}
+#' instead, and for those \code{.fitted}/\code{.resid} describe that mean
+#' rather than any one column. Either way the two columns agree with each
+#' other, which is what makes \code{.resid} a residual. When an engine
+#' supplies its own fitted signal that signal is used for \code{.fitted} in
+#' place of the segment means, and rides along in a \code{fitted} column of
+#' its own, so for those engines the two columns agree. The engines that
+#' do this are exactly the ones \code{\link{cpt_methods}()} marks in its
+#' \code{fitted} column: \code{smuce}, \code{hsmuce}, \code{cpop},
+#' \code{bcp}, \code{beast}, \code{decafs}, \code{segmented},
+#' \code{mcp} and \code{bfast}.
 #' @export
 augment.ggcpt <- function(x, ...) {
   # For a multivariate result use the wide frame (index + one column per
@@ -171,15 +270,36 @@ augment.ggcpt <- function(x, ...) {
     }
   }
 
-  # The index used to flag changepoints, and the value vector used for .resid
-  # (the first coordinate for the wide multivariate frame).
+  # The index used to flag changepoints, and the value vector used for
+  # `.resid`.
   index_col <- data[["index"]]
-  value_vec <- if (use_wide) {
-    coord_cols <- setdiff(names(data), "index")
-    as.numeric(data[[coord_cols[1]]])
-  } else {
-    data$value
-  }
+  # `.resid` has to be computed against the series `param_estimate` was
+  # computed FROM, which is always `x$data$value`. Reading coordinate one
+  # out of `data_wide` instead was right for twelve of the sixteen
+  # multivariate wrappers and wrong for four: `fmean`, `fcov`, `kwc` and
+  # `fabisearch` store `rowMeans(X)` as their univariate series (see
+  # wrap-functional.R and wrap-highdim2.R), so build_segments() derived
+  # `param_estimate` from the row averages while this subtracted it from
+  # coordinate one -- two different quantities, and `.resid` was not a
+  # residual at all.
+  #
+  # Measured on a 120x6 `fmean` fit: `.resid` equalled `X[, 1] - .fitted`
+  # and did NOT equal `value - .fitted`. Using `data$value` is identical
+  # for the twelve wrappers where the two agree, so this changes nothing
+  # for them and makes the other four correct.
+  #
+  # Taken from `x$data`, not from the local `data`: on the multivariate path
+  # that has been replaced by the wide frame, which has no `value` column at
+  # all -- reading it there gave a zero-length vector and `$<-` refused to
+  # recycle it to n rows.
+  # Two conventions live in the next twenty lines and they agree only
+  # because `$data$index` is `seq_len(n)`: `.fitted`/`seg_id` are written by
+  # ROW POSITION (`idx <- seq(s$start, s$end)`, and segment bounds are
+  # positions), while `is_changepoint` is written by VALUE MATCH against
+  # `$changepoints$cp`. attach_index() keeps `index` positional and adds the
+  # user's scale as `index_value` precisely so that stays true -- if either
+  # ever became the user's scale, one of the two would silently be wrong.
+  value_vec <- as.numeric(x$data$value)
 
   data$seg_id <- NA_integer_
   data$.fitted <- NA_real_
@@ -232,7 +352,9 @@ cpt_test_stat <- function(fit) {
 #' Summary of a ggcpt object
 #'
 #' Provides a human-readable digest of a changepoint detection result,
-#' including the segment table with levels and lengths, total cost,
+#' including the segment table with levels and lengths (the level is the
+#' segment mean whatever `change_in` says; see \code{\link{new_ggcpt}}),
+#' total cost,
 #' penalty, and runtime.
 #'
 #' @param object A \code{ggcpt} object.
@@ -261,13 +383,15 @@ summary.ggcpt <- function(object, ...) {
 #' @export
 print.summary.ggcpt <- function(x, ...) {
   cat("ggcpt Summary\n")
-  cat("  Method:                  ", x$method, "\n")
-  cat("  Change in:               ", x$change_in, "\n")
-  cat("  Changepoints found:      ", x$n_changepoints, "\n")
-  cat("  CP convention:           ", x$cp_convention, "\n")
-  cat("  Series length:           ", x$n_obs, "\n")
-  cat("  Penalty:                 ", format_penalty(x$penalty), "\n")
-  cat("  Runtime (seconds):       ", format(x$runtime, digits = 4), "\n")
+  # Same column as print.ggcpt(): the two are two views of one object, and
+  # they used to indent their values differently.
+  cat_field("Method", x$method)
+  cat_field("Change in", x$change_in)
+  cat_field("Changepoints found", x$n_changepoints)
+  cat_field("CP convention", x$cp_convention)
+  cat_field("Series length", x$n_obs)
+  cat_field("Penalty", format_penalty(x$penalty))
+  cat_field("Runtime (seconds)", format(x$runtime, digits = 4))
   if (nrow(x$segments) > 0) {
     cat("\nSegments:\n")
     print(x$segments, n = min(nrow(x$segments), 10))
@@ -293,7 +417,9 @@ print.summary.ggcpt <- function(x, ...) {
 #' @param ... Additional arguments passed to methods.
 #' @return \code{as_tibble()} and \code{as.data.frame()} return the changepoints
 #'   table; \code{format()} returns a length-one character string; \code{plot()}
-#'   returns a \code{ggplot} object.
+#'   draws the default plot and returns the \code{ggplot} object invisibly.
+#' @seealso \code{\link{ggcpt_plot_methods}} for \code{plot()} on the other
+#'   result classes, and \code{\link{tidy.ggcpt}()} for the tidy accessors.
 #' @name ggcpt_methods
 #' @examples
 #' set.seed(2022)
@@ -325,5 +451,5 @@ format.ggcpt <- function(x, ...) {
 #' @rdname ggcpt_methods
 #' @exportS3Method base::plot
 plot.ggcpt <- function(x, ...) {
-  autoplot.ggcpt(x, ...)
+  plot_via_autoplot(x, ...)
 }

@@ -4,7 +4,11 @@
 \alias{cpt_methods}
 \title{Introspect available changepoint detection methods}
 \usage{
-cpt_methods()
+cpt_methods(capabilities = TRUE)
+}
+\arguments{
+\item{capabilities}{Include the capability flag columns? Defaults to
+\code{TRUE}. Set \code{FALSE} for the compact 0.4.0-shaped table.}
 }
 \value{
 A tibble with columns:
@@ -12,23 +16,69 @@ A tibble with columns:
   \item{method}{Method name as passed to \code{cpt_detect()}.}
   \item{change_in}{What types of change the method can detect.}
   \item{engine}{The upstream R package that implements the method.}
-  \item{status}{\code{"available"} (wired in this release) or \code{"planned"} (future).}
+  \item{status}{\code{"available"} (wired in this release),
+        \code{"registered"} (supplied by the user this session; see
+        \code{\link{cpt_register_method}()}), or \code{"planned"}
+        (future).}
   \item{installed}{\code{TRUE} if the engine package is installed,
         \code{FALSE} if it is a \code{Suggests} engine that is missing,
-        \code{NA} for planned methods.}
+        \code{NA} for planned and registered methods.}
   \item{target_release}{What a planned method is waiting on: a release,
         or \code{"when on CRAN"} when the engine package itself is not
         available from CRAN. \code{NA} for methods that are already
         wired. Asking \code{cpt_detect()} for a planned method reports
         this rather than claiming the name does not exist.}
+  \item{multivariate, univariate, online, ci, fitted, posterior,
+        statistic, path, scale_space}{Capability flags (omitted when
+        \code{capabilities = FALSE}). \code{ci} means the engine
+        supplies changepoint-location confidence intervals; \code{fitted}
+        a length-\eqn{n} fitted signal; \code{posterior} a per-location
+        posterior probability; \code{statistic} and \code{path} the
+        internals rendered by \code{\link{ggcpt_statistic}()} and
+        \code{\link{ggcpt_solution_path}()}, which error with the list
+        of supporting engines when a result does not carry them.
+
+        \code{scale_space} is not one of those, despite sitting beside
+        them. Nothing stores a scale space on a result:
+        \code{\link{cpt_scale_space}()} computes one on demand by
+        sweeping a multiscale detector's bandwidth over the series, so
+        it works on \emph{any} series and any result, a \code{pelt}
+        fit included. What this column marks is the two engines that
+        sweep can be run \emph{with}, i.e. the domain of that
+        function's own \code{method} argument:
+        \code{subset(cpt_methods(), scale_space)$method}.
+
+        \code{online} means the \emph{algorithm} is sequential (it
+        consumes observations one at a time), and this table reports it
+        because it governs how the method behaves in batch: an online
+        detector's threshold is a rate per observation, so run over a
+        whole series through \code{\link{cpt_detect}()} it reports
+        roughly \eqn{n / \mathrm{arl0}} changepoints by construction.
+        It does \strong{not} mean the method can be passed to
+        \code{\link{cpt_monitor}()}, which takes its own three:
+        \code{"edetector"}, \code{"cpm"} and \code{"ocd"}. The two
+        sets overlap without coinciding: \code{bocpd} is an online
+        algorithm this table marks but the monitor does not offer, and
+        \code{edetector} is native to this package rather than a
+        wrapped engine, so it has no row here at all.}
 }
 }
 \description{
-Returns a tibble describing every method the package knows about — those
-that are wired and those that are planned — along with their capabilities
-and installation status. Useful for discovering what can be run and what
-needs to be installed.
+Returns a tibble describing every method the package knows about (those
+that are wired, those a user has registered with
+\code{\link{cpt_register_method}()}, and those that are planned), along
+with their capabilities and installation status. Useful for discovering
+what can be run, what needs to be installed, and which methods expose the
+extras the diagnostics need (confidence intervals, a fitted signal, a
+posterior, a detector statistic, a solution path, a bandwidth to sweep).
 }
 \examples{
 cpt_methods()
+# which methods can draw a confidence interval?
+subset(cpt_methods(), ci)$method
+}
+\seealso{
+\code{\link{cpt_install_engines}()} to install a whole family of
+  the engines this table reports on; \code{\link{cpt_detect}()} to run
+  one; \code{\link{cpt_register_method}()} to add your own.
 }

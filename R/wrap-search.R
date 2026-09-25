@@ -1,4 +1,4 @@
-#' WBS wrapper — Wild Binary Segmentation
+#' WBS wrapper: Wild Binary Segmentation
 #'
 #' Wraps the \code{wbs} package for randomised changepoint detection via
 #' Wild Binary Segmentation.
@@ -7,25 +7,37 @@
 #' @param n_intervals Number of random intervals. Defaults to \code{5000}.
 #' @param threshold Manual threshold for detection. If \code{NULL}, model
 #'   selection uses the strengthened Schwarz Information Criterion (sSIC).
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to \code{wbs::wbs()}.
 #' @return A \code{ggcpt} object.
+#' @references
+#' \insertRef{fryzlewicz2014wild}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("wbs", quietly = TRUE)
+#' set.seed(2026)
+#' res <- wbs_wrapper(c(rnorm(60), rnorm(60, 4)), n_intervals = 200)
+#' res$changepoints
+#' res$penalty$type   # sSIC selection, because `threshold` was not supplied
 wbs_wrapper <- function(x, n_intervals = 5000, threshold = NULL, seed = NULL, ...) {
 
   need_pkg("wbs")
+  reject_renamed_args(list(...), "wbs")
   validate_scalar(n_intervals, "n_intervals", min = 1)
   validate_data(x)
   data_vec <- as_uni_vector(x, "wbs")
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   # The engine errors on constant input; a constant series simply has no
   # changepoints, so normalise to the empty-ggcpt contract.
   fit <- tryCatch(
     wbs::wbs(data_vec, M = n_intervals, ...),
     error = function(e) {
-      if (grepl("constant", conditionMessage(e), fixed = TRUE)) NULL else stop(e)
+      if (grepl("constant", conditionMessage(e), fixed = TRUE)) NULL
+      else rethrow_short_series(e, "wbs", length(data_vec))
     }
   )
   if (is.null(fit)) {
@@ -35,6 +47,9 @@ wbs_wrapper <- function(x, n_intervals = 5000, threshold = NULL, seed = NULL, ..
                        call = match.call()))
   }
   if (!is.null(threshold)) {
+    # A string or `NA` ran and reported no changepoints, a vector used its
+    # first element, and a negative value flagged every observation.
+    validate_scalar(threshold, "threshold", min = 0)
     penalty <- list(type = "threshold", value = as.numeric(threshold))
     # A manual threshold that finds nothing errors ("no change-poinst found,
     # choose larger Kmax"); a series with no detected changepoints is a valid
@@ -71,7 +86,7 @@ wbs_wrapper <- function(x, n_intervals = 5000, threshold = NULL, seed = NULL, ..
   )
 }
 
-#' WBS2 wrapper — Wild Binary Segmentation 2
+#' WBS2 wrapper: Wild Binary Segmentation 2
 #'
 #' Wraps the \code{breakfast} package's WBS2 solution path with
 #' steepest-drop-to-low-levels (SDLL) model selection.
@@ -79,10 +94,52 @@ wbs_wrapper <- function(x, n_intervals = 5000, threshold = NULL, seed = NULL, ..
 #' @param x A numeric vector.
 #' @param ... Additional arguments passed to \code{breakfast::breakfast()}.
 #' @return A \code{ggcpt} object.
+#' @section Reproducibility:
+#' This engine is \strong{not reproducible call to call within an R
+#' session}, and no argument here can make it so. On a 200-point series with
+#' one change at 100, repeated identical calls (same input,
+#' \code{set.seed()} re-run beforehand so that \code{.Random.seed} is
+#' byte-identical on entry) return a last changepoint of either 183 or
+#' 188, roughly evenly split. The variation is therefore not driven by R's
+#' random number stream, which is why this wrapper has no \code{seed}
+#' argument to offer: there is no stream to pin.
+#'
+#' It is upstream, not in this package. Calling
+#' \code{breakfast::breakfast(x, solution.path = "wbs2",
+#' model.selection = "sdll")} directly (\pkg{breakfast} 2.5) reproduces it
+#' exactly. A \emph{fresh} R session is deterministic (five separate
+#' sessions agreed), so what varies is state the engine carries between
+#' calls.
+#'
+#' In practice this is rare, and needs a series whose model selection sits
+#' near a tie. Measured over eight other series with three identical calls
+#' each, \code{wbs2} was stable on all eight; the flip above reproduces
+#' only on that one configuration. \code{tguh}, which uses the same
+#' package, was stable throughout, as were the other 35 of the 50 wired
+#' methods this experiment covered (the rest need an engine that was not
+#' installed when it was run). If you need a segmentation you can reproduce
+#' exactly, take the result of the first call in a session, or use an
+#' engine with a \code{seed} argument (\code{\link{cpt_methods}()}
+#' reports which wrappers have one).
+#' @references
+#' \insertRef{fryzlewicz2020detecting}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("breakfast", quietly = TRUE)
+#' set.seed(2026)
+#' res <- wbs2_wrapper(c(rnorm(60), rnorm(60, 4)))
+#' res$changepoints
 wbs2_wrapper <- function(x, ...) {
 
   need_pkg("breakfast")
+  reject_managed_args(list(...), "wbs2", c(
+    solution.path = paste("it is what selects WBS2 rather than one of",
+                          "breakfast's other solution paths; use",
+                          "`cpt_detect(method = \"tguh\")` or another",
+                          "method for a different one"),
+    model.selection = paste("the wrapper pins breakfast's selector so the",
+                            "result does not depend on the engine's own",
+                            "default")))
   validate_data(x)
   data_vec <- as_uni_vector(x, "wbs2")
 
@@ -110,7 +167,7 @@ breakfast_cpts <- function(fit) {
   cpts[!is.na(cpts) & cpts > 0]
 }
 
-#' NOT wrapper — Narrowest-Over-Threshold
+#' NOT wrapper: Narrowest-Over-Threshold
 #'
 #' Wraps the \code{not} package for changepoint detection via the
 #' Narrowest-Over-Threshold method. The contrast determines what change is
@@ -121,11 +178,22 @@ breakfast_cpts <- function(fit) {
 #' @param contrast Contrast type. One of \code{"pcwsConstMean"},
 #'   \code{"pcwsLinContMean"}, \code{"pcwsLinMean"},
 #'   \code{"pcwsConstMeanVar"}. Defaults to \code{"pcwsConstMean"}.
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to \code{not::not()}.
 #' @return A \code{ggcpt} object whose \code{change_in} reflects the
 #'   contrast: \code{"mean"}, \code{"meanvar"}, or \code{"slope"}.
+#' @references
+#' \insertRef{baranowski2019narrowest}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("not", quietly = TRUE)
+#' set.seed(2026)
+#' not_wrapper(c(rnorm(60), rnorm(60, 4)))$changepoints
+#' # a change in slope, not in level: pick the contrast to match
+#' trend <- c(1:60, 60 - 1:60) / 10 + rnorm(120)
+#' not_wrapper(trend, contrast = "pcwsLinContMean")$changepoints
 not_wrapper <- function(x, contrast = "pcwsConstMean", seed = NULL, ...) {
 
   need_pkg("not")
@@ -136,7 +204,7 @@ not_wrapper <- function(x, contrast = "pcwsConstMean", seed = NULL, ...) {
   validate_data(x)
   data_vec <- as_uni_vector(x, "not")
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   change_in <- switch(contrast,
     pcwsConstMean = "mean",
@@ -150,7 +218,8 @@ not_wrapper <- function(x, contrast = "pcwsConstMean", seed = NULL, ...) {
   fit <- tryCatch(
     not::not(data_vec, contrast = contrast, ...),
     error = function(e) {
-      if (grepl("constant", conditionMessage(e), fixed = TRUE)) NULL else stop(e)
+      if (grepl("constant", conditionMessage(e), fixed = TRUE)) NULL
+      else rethrow_short_series(e, "not", length(data_vec))
     }
   )
   if (is.null(fit)) {
@@ -173,7 +242,7 @@ not_wrapper <- function(x, contrast = "pcwsConstMean", seed = NULL, ...) {
   )
 }
 
-#' MOSUM wrapper — Moving Sum
+#' MOSUM wrapper: Moving Sum
 #'
 #' Wraps the \code{mosum} package for moving-sum-based changepoint
 #' detection, either at a single bandwidth or (with
@@ -188,11 +257,21 @@ not_wrapper <- function(x, contrast = "pcwsConstMean", seed = NULL, ...) {
 #' @param multiscale Logical. Use the multiscale MOSUM procedure
 #'   (\code{mosum::multiscale.localPrune()}) instead of a single bandwidth?
 #'   Defaults to \code{FALSE}.
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to \code{mosum::mosum()} or
 #'   \code{mosum::multiscale.localPrune()}.
 #' @return A \code{ggcpt} object.
+#' @references
+#' \insertRef{eichinger2018mosum}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("mosum", quietly = TRUE)
+#' set.seed(2026)
+#' x <- c(rnorm(100), rnorm(100, 3))
+#' mosum_wrapper(x, G = 20)$changepoints
+#' mosum_wrapper(x, multiscale = TRUE)$changepoints
 mosum_wrapper <- function(x, G = NULL, multiscale = FALSE, seed = NULL, ...) {
 
   need_pkg("mosum")
@@ -200,7 +279,19 @@ mosum_wrapper <- function(x, G = NULL, multiscale = FALSE, seed = NULL, ...) {
   validate_data(x)
   data_vec <- as_uni_vector(x, "mosum")
 
-  if (!is.null(seed)) set.seed(seed)
+  # A bandwidth is a number of observations or, below 1, a fraction of the
+  # series; multiscale mode takes a set of them. `NA` failed with "missing
+  # value where TRUE/FALSE needed", a string with "Please use bandwidth
+  # smaller than length(x)/2".
+  if (!is.null(G)) {
+    if (isTRUE(multiscale)) {
+      validate_grid(G, "G", min = 0, min_open = TRUE)
+    } else {
+      validate_scalar(G, "G", min = 0, min_open = TRUE)
+    }
+  }
+
+  local_seed(seed)
 
   if (isTRUE(multiscale)) {
     fit <- if (is.null(G)) {
@@ -248,7 +339,9 @@ mosum_wrapper <- function(x, G = NULL, multiscale = FALSE, seed = NULL, ...) {
 #' Wraps the \code{IDetect} package. Requires the \code{IDetect} package.
 #'
 #' @param x A numeric vector.
-#' @param seed Optional seed for reproducibility.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @param ... Additional arguments passed to \code{IDetect::ID()}.
 #' @return A \code{ggcpt} object. When the engine finds no changepoints
 #'   (including when it signals "No change-points found"), an empty result
@@ -256,7 +349,7 @@ mosum_wrapper <- function(x, G = NULL, multiscale = FALSE, seed = NULL, ...) {
 #'   empty result; see the note below.
 #'
 #' @section Constant input:
-#' \code{IDetect::ID()} does not treat a flat series consistently — its
+#' \code{IDetect::ID()} does not treat a flat series consistently: its
 #' statistics become \eqn{0/0}, and what comes back depends on the value and
 #' the length. \code{rep(3, 200)} yields \emph{126} changepoints, at
 #' 1, 3, 4, 6, 7, ...; \code{rep(0, 100)} raises "No change-points found";
@@ -265,7 +358,15 @@ mosum_wrapper <- function(x, G = NULL, multiscale = FALSE, seed = NULL, ...) {
 #' one short-circuits to the empty result. Constancy is decided by exact
 #' equality, so a series with tiny but genuine variation still reaches the
 #' engine.
+#' @references
+#' \insertRef{anastasiou2022idetect}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("IDetect", quietly = TRUE)
+#' set.seed(2026)
+#' idetect_wrapper(c(rnorm(60), rnorm(60, 4)))$changepoints
+#' # a flat series has no changepoint; see "Constant input" above
+#' nrow(idetect_wrapper(rep(3, 100))$changepoints)
 idetect_wrapper <- function(x, seed = NULL, ...) {
 
   need_pkg("IDetect")
@@ -281,7 +382,7 @@ idetect_wrapper <- function(x, seed = NULL, ...) {
                        call = match.call()))
   }
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   # IDetect::ID() errors (rather than returning an empty set) when it finds
   # no changepoints; normalise that to the empty-ggcpt contract every other
@@ -323,16 +424,38 @@ idetect_wrapper <- function(x, seed = NULL, ...) {
 #' @param x A numeric vector.
 #' @param ... Additional arguments passed to \code{breakfast::breakfast()}.
 #' @return A \code{ggcpt} object.
+#' @references
+#' \insertRef{fryzlewicz2018tail}{ggchangepoint}
 #' @export
+#' @family changepoint engines
+#' @examplesIf requireNamespace("breakfast", quietly = TRUE)
+#' set.seed(2026)
+#' res <- tguh_wrapper(c(rnorm(60), rnorm(60, 4)))
+#' res$changepoints
+#' res$penalty$type
 tguh_wrapper <- function(x, ...) {
 
   need_pkg("breakfast")
+  reject_managed_args(list(...), "tguh", c(
+    solution.path = paste("it is what selects the tail-greedy",
+                          "unbalanced-Haar path rather than one of",
+                          "breakfast's others, and a `tguh` result with a",
+                          "different path is not tguh"),
+    model.selection = paste("the wrapper pins \"ic\", the selector the",
+                            "TGUH paper pairs with this path")))
   validate_data(x)
   data_vec <- as_uni_vector(x, "tguh")
 
-  # Pin the model selector: breakfast's default choice ("lp") reports
-  # spurious changepoints on constant data; "ic" (strengthened SIC) is the
-  # selector the TGUH paper pairs with the solution path.
+  # Pin the model selector to "ic" (strengthened SIC), which is the
+  # selector the TGUH paper pairs with this solution path. Pinning it also
+  # makes the result independent of breakfast's own default, which is
+  # `model.selection = NULL` -- the engine then chooses for itself, so an
+  # upstream change of mind would silently change our answers. (On the
+  # installed version "lp", "ic" and the NULL default agree on the cases
+  # tested: none of the three reports a changepoint in constant,
+  # near-constant or pure-noise data, and all three find the single step at
+  # 100 in a two-segment series. The pin is for reproducibility, not to
+  # work around a misfire.)
   fit <- suppressWarnings(
     breakfast::breakfast(data_vec, solution.path = "tguh",
                          model.selection = "ic", ...)

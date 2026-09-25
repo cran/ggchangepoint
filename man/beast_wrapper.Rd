@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-bayes.R
 \name{beast_wrapper}
 \alias{beast_wrapper}
-\title{BEAST wrapper — Bayesian estimation of abrupt change, seasonality, and trend}
+\title{BEAST wrapper: Bayesian estimation of abrupt change, seasonality, and trend}
 \usage{
 beast_wrapper(x, prob_threshold = 0.5, seed = NULL, ...)
 }
@@ -13,7 +13,9 @@ beast_wrapper(x, prob_threshold = 0.5, seed = NULL, ...)
 which a candidate trend changepoint is reported. Defaults to \code{0.5}.}
 
 \item{seed}{Optional seed for the engine's MCMC sampler (passed to
-\code{Rbeast::beast()} as \code{mcmc.seed}).}
+\code{Rbeast::beast()} as \code{mcmc.seed}). The seed is scoped to this
+call: \code{.Random.seed} is saved and restored, so a seeded call
+inside a simulation loop does not pin the loop's own stream.}
 
 \item{...}{Additional arguments passed to \code{Rbeast::beast()}.}
 }
@@ -32,10 +34,60 @@ reported; the probability profile renders via
 }
 \examples{
 \dontshow{if (requireNamespace("Rbeast", quietly = TRUE) && .Platform$OS.type != "windows") (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
-res <- beast_wrapper(c(rnorm(60), rnorm(60, 4)), seed = 2026)
-res$changepoints
+# try(): Rbeast intermittently returns an all-NaN fit and the condition
+# can persist for a session, so a check must not fail on it -- the
+# wrapper reports it by name when it happens.
+res <- try(beast_wrapper(c(rnorm(60), rnorm(60, 4)), seed = 2026),
+           silent = TRUE)
+if (!inherits(res, "try-error")) res$changepoints
 \dontshow{\}) # examplesIf}
 }
 \references{
 \insertRef{zhao2019beast}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

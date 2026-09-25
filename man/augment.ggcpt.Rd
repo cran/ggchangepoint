@@ -12,7 +12,28 @@
 \item{...}{Additional arguments (ignored).}
 }
 \value{
-A tibble with the original data plus augment columns.
+A tibble with one row per observation: the data as the result
+  carries it, plus four added columns. The data half depends on the
+  result: \code{index} and \code{value} for a univariate one,
+  \code{index} plus \strong{one column per coordinate} (named as the
+  input's columns were) for a multivariate one, and an extra
+  \code{fitted} column for the engines that supply their own fitted
+  signal. The added four are always the same:
+  \describe{
+    \item{\code{seg_id}}{which segment the observation falls in,
+      counting from 1.}
+    \item{\code{.fitted}}{the segment's \code{param_estimate}: the
+      segment \strong{mean}, for every method in the package, or the
+      engine's own fitted signal where there is one. See the details
+      below for the multivariate case.}
+    \item{\code{.resid}}{\code{value - .fitted}, against the
+      univariate series the result carries.}
+    \item{\code{is_changepoint}}{\code{TRUE} at each detected
+      location, under the result's \code{cp_convention}.}
+  }
+  Measured on a \code{pelt} fit the columns are \code{index},
+  \code{value}, \code{seg_id}, \code{.fitted}, \code{.resid},
+  \code{is_changepoint}.
 }
 \description{
 Returns the original data with added columns: \code{seg_id}, \code{.fitted},
@@ -22,9 +43,20 @@ Returns the original data with added columns: \code{seg_id}, \code{.fitted},
 For a multivariate result every coordinate is returned, but the
 changepoints are shared across them, so \code{seg_id} and
 \code{is_changepoint} apply to the whole row while \code{.fitted} and
-\code{.resid} describe the \emph{first} coordinate only — the same
-coordinate \code{$segments$param_estimate} summarises. When an engine
-supplies its own fitted signal (SMUCE, DeCAFS, cpop, segmented, bcp,
-beast) that signal is used for \code{.fitted} in place of the segment
-means.
+\code{.resid} describe the \strong{univariate series the result
+carries}: \code{$data$value}, the same series
+\code{$segments$param_estimate} summarises, so \code{.resid} is always
+\code{value - .fitted}. For most multivariate engines that series is
+the first coordinate; \code{fmean}, \code{fcov}, \code{kwc} and
+\code{fabisearch} store the cross-sectional mean \code{rowMeans()}
+instead, and for those \code{.fitted}/\code{.resid} describe that mean
+rather than any one column. Either way the two columns agree with each
+other, which is what makes \code{.resid} a residual. When an engine
+supplies its own fitted signal that signal is used for \code{.fitted} in
+place of the segment means, and rides along in a \code{fitted} column of
+its own, so for those engines the two columns agree. The engines that
+do this are exactly the ones \code{\link{cpt_methods}()} marks in its
+\code{fitted} column: \code{smuce}, \code{hsmuce}, \code{cpop},
+\code{bcp}, \code{beast}, \code{decafs}, \code{segmented},
+\code{mcp} and \code{bfast}.
 }

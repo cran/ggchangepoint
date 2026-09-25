@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-inference.R
 \name{smuce_wrapper}
 \alias{smuce_wrapper}
-\title{SMUCE / HSMUCE wrapper — multiscale changepoint inference}
+\title{SMUCE / HSMUCE wrapper: multiscale changepoint inference}
 \usage{
 smuce_wrapper(x, alpha = 0.5, family = c("gauss", "hsmuce"), ...)
 }
@@ -20,7 +20,7 @@ noise) or \code{"hsmuce"} (HSMUCE, segment-wise variance). Defaults to
 specification; call \code{stepR::stepFit()} directly for those.
 \code{"hsmuce"} additionally refuses a series whose point-to-point
 variation lies more than about seven orders of magnitude below its own
-scale — a globally flat series, or a step whose segments are numerically
+scale: a globally flat series, or a step whose segments are numerically
 constant, as \code{cpt_simulate(sd = 0)} produces once any rounding is
 added. \pkg{stepR}'s heterogeneous variance estimator aborts the \R
 session on such input rather than raising an error, so it cannot be
@@ -61,3 +61,49 @@ ggplot2::autoplot(res, show_ci = TRUE)
 
 \insertRef{pein2017hsmuce}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

@@ -3,6 +3,7 @@
 # contract-violating input.
 
 test_that("R26: a wrong-length `index` names the argument at fault", {
+  skip_on_cran()
   set.seed(26)
   x <- c(rnorm(50), rnorm(50, 5))
 
@@ -90,6 +91,7 @@ test_that("R29: mosum's automatic bandwidth is never 1", {
 })
 
 test_that("R30: npmojo's default bandwidth works on short series", {
+  skip_on_cran()
   skip_if_not_installed("CptNonPar")
   set.seed(30)
   # Before: the default G = max(20, 0.1 * n) exceeded the engine's n / 2
@@ -154,6 +156,7 @@ test_that("R32: cpt_simulate defaults every change type and warns about
 })
 
 test_that("R33: cpt_detect() records its own call, not an internal helper", {
+  skip_on_cran()
   set.seed(33)
   x <- c(rnorm(60), rnorm(60, 5))
 
@@ -179,6 +182,7 @@ test_that("R33: cpt_detect() records its own call, not an internal helper", {
 })
 
 test_that("R34: duplicate multivariate coordinate names are made unique", {
+  skip_on_cran()
   set.seed(34)
   X <- cbind(c(rnorm(60), rnorm(60, 5)), c(rnorm(60), rnorm(60, -4)))
   # A matrix may legally carry duplicate colnames; add_column() then rejected
@@ -208,6 +212,7 @@ test_that("R34: duplicate multivariate coordinate names are made unique", {
 
 test_that("R35: the changepoint engines keep their upstream fit and report a
            cost where one is well defined", {
+  skip_on_cran()
   set.seed(35)
   x <- c(rnorm(120), rnorm(120, 5))
 
@@ -250,9 +255,32 @@ test_that("R35: the changepoint engines keep their upstream fit and report a
     expect_no_warning(g <- glance(res))
     expect_true(is.na(g$total_cost), info = m)
   }
+
+  # ?glance.ggcpt names four NA cases and one class of exception. Two of the
+  # NAs and the exception were unpinned, and the first is the most fragile
+  # claim in the package: it is not a property of `changepoint` at all but
+  # of a *collision between two of this package's own Imports*. Loading
+  # changepoint.np replaces changepoint's logLik method for `cpt` objects
+  # with one that errors on exactly change_in = "mean" under the default
+  # MBIC penalty. Both packages are Imports, so the collision is always
+  # present -- and if either upstream changes, this NA quietly becomes a
+  # number and the help page is wrong with nothing to report it.
+  expect_true(is.na(glance(suppressWarnings(
+    cpt_detect(x, method = "pelt", change_in = "mean")))$total_cost))
+  # np is NA for an unrelated reason: changepoint.np defines no logLik
+  expect_true(is.na(glance(suppressWarnings(
+    cpt_detect(x, method = "np")))$total_cost))
+  # and the other half of the sentence -- a *named* penalty reports
+  # normally, where only numeric ones were covered above
+  for (p in c("BIC", "AIC")) {
+    expect_true(is.finite(glance(suppressWarnings(
+      cpt_detect(x, method = "pelt", change_in = "mean",
+                 penalty = p)))$total_cost), info = p)
+  }
 })
 
 test_that("R36: every plot the package produces survives ggcpt_interactive()", {
+  skip_on_cran()
   skip_if_not_installed("plotly")
   set.seed(36)
   x <- c(rnorm(120), rnorm(120, 5))
@@ -292,6 +320,7 @@ test_that("R36: every plot the package produces survives ggcpt_interactive()", {
 
 test_that("R37: glance() always returns one row and cpt_cite() explains an
            unusable method name", {
+  skip_on_cran()
   set.seed(37)
   x <- c(rnorm(60), rnorm(60, 5))
 
@@ -332,6 +361,7 @@ test_that("R37: glance() always returns one row and cpt_cite() explains an
 
 test_that("R38: cpt_stability() reports the proportion of replicates, not a
            capped count of detections", {
+  skip_on_cran()
   # `freq` is documented as "the proportion of replicates detecting a
   # changepoint within `margin` of that index". The loop incremented once per
   # *changepoint*, so a replicate whose detections had overlapping +/-margin
@@ -387,6 +417,7 @@ test_that("R38: cpt_stability() reports the proportion of replicates, not a
 })
 
 test_that("R39: the scale-sensitivity note in ?cpt_detect is accurate", {
+  skip_on_cran()
   # `pelt`/`binseg`/`segneigh`/`fpop` weigh the penalty against a raw segment
   # cost for a change in mean, so widening the noise shatters the
   # segmentation. Nothing in the package documented that until now; this test
@@ -432,6 +463,7 @@ test_that("R39: the scale-sensitivity note in ?cpt_detect is accurate", {
 
 test_that("R40: the documented dispatcher-vs-wrapper penalty difference is
            real, and an explicit penalty reconciles the two", {
+  skip_on_cran()
   # `cpt_detect()` resolves its "MBIC" default to a numeric value stronger
   # than the numeric-penalty wrappers' own 2 * log(n), so the two entry
   # points can disagree on the same series. Both defaults were documented;
@@ -475,6 +507,7 @@ test_that("R40: the documented dispatcher-vs-wrapper penalty difference is
 })
 
 test_that("R41: every S3 method dispatches from NAMESPACE alone", {
+  skip_on_cran()
   # The package used to re-register print/plot/summary/tidy/glance/augment/
   # autoplot from .onLoad(), writing into base's and generics' methods tables
   # for no effect and wrapping the lot in suppressWarnings() so a real
@@ -532,6 +565,7 @@ test_that("R41: every S3 method dispatches from NAMESPACE alone", {
 })
 
 test_that("R42: the covering metric is unchanged by the linear sweep", {
+  skip_on_cran()
   # calc_covering() used to compare every truth segment against every
   # prediction segment, which is quadratic: 7.5 s for 3000 changepoints. It
   # now scans only the overlapping prediction segments, found with two
@@ -594,6 +628,7 @@ test_that("R42b: cpt_metrics stays fast with many changepoints", {
 })
 
 test_that("R43: geom_cpt_ci needs y/xmin/xmax, and x is optional", {
+  skip_on_cran()
   # The help said `x` was required alongside xmin/xmax/y, but the layer is a
   # horizontal error bar: `x` is accepted and ignored, and neither of the
   # package's own two call sites supplies it.
@@ -610,9 +645,13 @@ test_that("R43: geom_cpt_ci needs y/xmin/xmax, and x is optional", {
                                                xmax = xmax),
                        inherit.aes = FALSE)))
   # y really is required
+  # Patterned on ggplot2's own wording rather than left bare: without it
+  # this passed on any build failure at all, including one that had nothing
+  # to do with the missing `y`.
   expect_error(ggplot2::ggplot_build(
     base + geom_cpt_ci(data = ci, ggplot2::aes(xmin = xmin, xmax = xmax),
-                       inherit.aes = FALSE)))
+                       inherit.aes = FALSE)),
+    "missing aesthetics")
 
   # and the other two geoms take exactly the aesthetics they document
   segs <- data.frame(start = c(1, 51), end = c(50, 100), param = c(0, 2))
@@ -675,12 +714,19 @@ test_that("R44: the three citation sources agree with each other", {
   expect_true(all(used %in% names(inst)),
               info = paste(setdiff(used, names(inst)), collapse = ", "))
 
-  # every @key cited in a vignette resolves in the vignette bibliography
+  # every @key cited in a vignette resolves in the vignette bibliography.
+  # The pattern deliberately does not require a four-digit year: the
+  # earlier one did, so `@rcore` -- the R itself citation -- was invisible
+  # to this check, and a misspelling of any yearless key would have gone
+  # unreported. The lookbehind is what keeps an email address from
+  # reading as a citation; measured against these seven vignettes the
+  # pattern finds 63 candidates and every one is a real bib key.
   rmds <- list.files(file.path(root, "vignettes"), "\\.Rmd$", full.names = TRUE)
   cited <- unlist(lapply(rmds, function(f) {
     l <- readLines(f, warn = FALSE)
-    m <- unlist(regmatches(l, gregexpr("@[A-Za-z][A-Za-z0-9]*[0-9]{4}[a-z0-9]*", l)))
-    sub("^@", "", m)
+    m <- unlist(regmatches(l, gregexpr(
+      "(?<![A-Za-z0-9_])@[A-Za-z0-9_][A-Za-z0-9_:.#&+?<>~/-]*", l, perl = TRUE)))
+    sub("[.,;:]+$", "", sub("^@", "", m))
   }))
   expect_true(all(unique(cited) %in% names(vig)),
               info = paste(setdiff(unique(cited), names(vig)), collapse = ", "))
@@ -689,9 +735,92 @@ test_that("R44: the three citation sources agree with each other", {
   expect_identical(vig[["fryzlewicz2018tail"]]$year, "2018")
   expect_identical(inst[["james2014ecp"]]$year, "2014")
   expect_match(inst[["james2014ecp"]]$journal, "Journal of Statistical Software")
+
+  # The reverse direction, which nothing checked: an entry that no consumer
+  # cites. Ten had accumulated -- seven engine papers sitting in the
+  # vignette bibliography while only the help pages cited them (ESAC,
+  # fChange, bfast, Pettitt, Taylor, mcp), two cited only by a vignette
+  # while sitting in the Rd bibliography as well (ChangepointInference,
+  # changeforest), and Demsar (2006), which was in both files and cited by
+  # neither. None of it renders anywhere -- there is no \insertAllCited in
+  # the package -- so each was dead weight in the tarball that read as
+  # though an attribution existed. Each bibliography now holds exactly what
+  # its own consumer cites.
+  expect_setequal(names(inst), unique(used))
+  expect_setequal(names(vig), unique(cited))
+
+  # This test is named for three citation sources, but only two were ever
+  # compared: the two .bib files. The third -- the free-text table behind
+  # cpt_cite() -- was never checked against either, which is precisely
+  # where the TGUH year drifted. Compare it now, for every method whose
+  # wrapper serves it alone and cites exactly one key, so the mapping from
+  # method to publication is unambiguous. (`cpt_wrapper` is deliberately
+  # excluded: it serves five `changepoint` methods and its help page cites
+  # the software paper, while cpt_cite() names each method's own paper.)
+  refs <- ggchangepoint:::cpt_references()
+  reg <- ggchangepoint:::builtin_registry()
+  shared <- names(which(table(reg$wrapper) > 1))
+  bib_author <- function(key) {
+    l <- readLines(inst_bib, warn = FALSE)
+    st <- grep("^@", l)
+    k <- sub(",$", "", sub("^@[a-zA-Z]+\\{", "", l[st]))
+    i <- match(key, k)
+    if (is.na(i)) return(NA_character_)
+    b <- l[st[i]:c(st[-1] - 1, length(l))[i]]
+    j <- grep("^\\s*author\\s*=", b)
+    if (!length(j)) return(NA_character_)
+    txt <- paste(b[j[1]:min(length(b), j[1] + 3)], collapse = " ")
+    trimws(sub("\\}\\s*,?\\s*[a-z]+\\s*=.*$", "",
+               gsub("[{}]", "", sub("^[^=]*=\\s*", "", txt))))
+  }
+  surnames <- function(z) unique(tolower(unlist(regmatches(z,
+    gregexpr("[A-Z][a-zA-Z'-]{2,}", z)))))
+  compared <- 0L
+  for (i in seq_len(nrow(reg))) {
+    w <- reg$wrapper[i]
+    if (w %in% shared) next
+    txt <- refs$reference[refs$method == reg$method[i]]
+    rd <- file.path(root, "man", paste0(w, ".Rd"))
+    if (!length(txt) || !file.exists(rd)) next
+    rl <- readLines(rd, warn = FALSE)
+    ks <- gsub("insertRef\\{|\\}.*", "",
+               regmatches(rl, regexpr("insertRef\\{[^}]+\\}", rl)))
+    if (length(ks) != 1L || is.null(inst[[ks]])) next
+    compared <- compared + 1L
+    # the same people, and the same year, in both places
+    expect_true(length(intersect(surnames(bib_author(ks)), surnames(txt))) > 0,
+                info = paste(reg$method[i], ks, sep = " / "))
+    ty <- unlist(regmatches(txt, gregexpr("(18|19|20)[0-9]{2}", txt)))
+    if (!is.na(inst[[ks]]$year) && length(ty)) {
+      expect_true(inst[[ks]]$year %in% ty,
+                  info = paste(reg$method[i], ks, inst[[ks]]$year, sep = " / "))
+    }
+  }
+  # a proportional tripwire: this compared 35 methods when written, and a
+  # refactor that stops resolving wrappers would silently compare none
+  expect_gt(compared, 30L)
+
+  # Finally, the pairing that makes a citation render at all. A vignette
+  # with @keys and no `bibliography:` field does not fail to build -- pandoc
+  # emits the key as literal text, so "@killick2012" reaches the reader.
+  # vignettes/articles/ is scanned here and nowhere else in this test:
+  # benchmarks.Rmd declares no bibliography, which is correct only while it
+  # cites nothing.
+  all_rmd <- list.files(file.path(root, "vignettes"), "\\.Rmd$",
+                        full.names = TRUE, recursive = TRUE)
+  expect_gte(length(all_rmd), 8L)
+  for (f in all_rmd) {
+    l <- readLines(f, warn = FALSE)
+    has_bib <- any(grepl("^bibliography:", l))
+    n_cite <- length(unlist(regmatches(l, gregexpr(
+      "(?<![A-Za-z0-9_])@[A-Za-z0-9_][A-Za-z0-9_:.#&+?<>~/-]*", l,
+      perl = TRUE))))
+    expect_identical(n_cite > 0L, has_bib, info = basename(f))
+  }
 })
 
 test_that("R45: exported surface that the suite never exercised", {
+  skip_on_cran()
   # Coverage measurement found two exported functions with no test at all,
   # and a number of documented modes and arguments that nothing called. They
   # work -- but nothing was guarding them against a future refactor.
@@ -754,6 +883,7 @@ test_that("R45: exported surface that the suite never exercised", {
 })
 
 test_that("R45b: documented wrapper arguments that nothing called", {
+  skip_on_cran()
   set.seed(46)
   x <- c(rnorm(80), rnorm(80, 5))
   X2 <- cbind(a = x, b = c(rnorm(80), rnorm(80, -4)))
@@ -795,6 +925,7 @@ test_that("R45b: documented wrapper arguments that nothing called", {
 
 test_that("R46: glance() has no unreachable class branch, and every engine's
            $fit matches what the documentation promises", {
+  skip_on_cran()
   set.seed(47)
   x <- c(rnorm(120), rnorm(120, 5))
   X <- cbind(a = x, b = rev(x), c = rnorm(240))
@@ -828,6 +959,7 @@ test_that("R46: glance() has no unreachable class branch, and every engine's
 })
 
 test_that("R47: the Bayesian displays' remaining documented paths", {
+  skip_on_cran()
   # `?ggcpt_posterior` says it works with bcp_wrapper() and beast_wrapper()
   # results, but only the bcp branch of posterior_prob_profile() was ever
   # exercised. The guards on ggcpt_runlength() had no test either.
@@ -866,6 +998,7 @@ test_that("R47: the Bayesian displays' remaining documented paths", {
 })
 
 test_that("R48: the greedy one-to-one matching really is a maximum matching", {
+  skip_on_cran()
   # ?cpt_metrics claims the greedy scan "yields a maximum matching for
   # interval-structured problems". Precision and recall are derived from it,
   # so if it ever fell short they would be silently understated. Check it
@@ -931,6 +1064,7 @@ test_that("R48: the greedy one-to-one matching really is a maximum matching", {
 })
 
 test_that("R49: cpt_batch() names the series that failed", {
+  skip_on_cran()
   # cpt_batch() exists for panels of hundreds of series; "`x` must have at
   # least 3 observations" on its own left the user to bisect the list to
   # find which one it meant.
@@ -963,6 +1097,7 @@ test_that("R49: cpt_batch() names the series that failed", {
 })
 
 test_that("R50: idetect returns the empty result on a constant series", {
+  skip_on_cran()
   skip_if_not_installed("IDetect")
   # IDetect::ID() is erratic on flat input -- its statistics go to 0/0 and
   # what comes back depends on the value and the length. rep(3, 200) came
@@ -1000,6 +1135,7 @@ test_that("R50: idetect returns the empty result on a constant series", {
 })
 
 test_that("R51: the dispatcher's change_in translations reach the engine", {
+  skip_on_cran()
   # cpt_detect() derives an engine-specific argument from `change_in` for
   # not/cpm/kcp/sn/fastcpd. Tests covered *overriding* those through `...`,
   # but never the derivation itself -- so a wrong translation would have
@@ -1041,6 +1177,7 @@ test_that("R51: the dispatcher's change_in translations reach the engine", {
 
 test_that("R52: envcpt does not print upstream try() failures as if it had
            failed", {
+  skip_on_cran()
   skip_if_not_installed("EnvCpt")
   # EnvCpt fits up to twelve models with try(), and a non-silent try() prints
   # its error straight to stderr. On a degenerate series several AR fits fail
@@ -1065,7 +1202,11 @@ test_that("R52: envcpt does not print upstream try() failures as if it had
   # The risk of diverting the message stream is hiding a real failure, so
   # check that one still gets through: a minimum segment length longer than
   # the series leaves the engine nothing to fit.
-  expect_error(envcpt_wrapper(rnorm(10), minseglen = 400))
+  # The pattern is the point: Part XLVII replaced the engine's bare
+  # "Minimum segment legnth is too large" with a message naming the method
+  # and the length, and a patternless expectation would pass on either.
+  expect_error(envcpt_wrapper(rnorm(10), minseglen = 400),
+               "Method `envcpt` could not segment a series of 10 observation")
 
   # (whether a given series also triggers an upstream convergence *warning*
   # is data-dependent, so it is not asserted here; warnings are deferred past
@@ -1073,6 +1214,7 @@ test_that("R52: envcpt does not print upstream try() failures as if it had
 })
 
 test_that("R53: hsmuce refuses input that would abort the R session", {
+  skip_on_cran()
   skip_if_not_installed("stepR")
   # stepR's heterogeneous variance estimator does not raise an R error when
   # the data carry essentially no noise at the per-segment scale -- it
@@ -1128,6 +1270,7 @@ test_that("R53: hsmuce refuses input that would abort the R session", {
 })
 
 test_that("R54: the package's own simulator never feeds hsmuce fatal input", {
+  skip_on_cran()
   skip_if_not_installed("stepR")
   # cpt_simulate() is how a user generates ground truth to benchmark against,
   # so its output must not be able to terminate the session. Two of its
@@ -1176,6 +1319,7 @@ test_that("R54: the package's own simulator never feeds hsmuce fatal input", {
 
 test_that("R55: the documented simulate-detect-evaluate-plot workflow holds
            end to end", {
+  skip_on_cran()
   # Each piece of the README/vignette workflow is tested on its own, but not
   # the chain: a result's changepoints feeding cpt_metrics() and
   # ggcpt_eval(), its segments feeding geom_cpt_segment(), the object itself
@@ -1255,6 +1399,7 @@ test_that("R56: ocd accepts an explicit threshold, skipping calibration", {
 })
 
 test_that("R57: the package's own arguments enforce their documented ranges", {
+  skip_on_cran()
   # The engines validate their own arguments -- stepR refuses an alpha
   # outside (0, 1), SNSeg an unlisted confidence -- but this package's own
   # arguments were taken on trust, and out-of-range values there returned
@@ -1297,6 +1442,7 @@ test_that("R57: the package's own arguments enforce their documented ranges", {
 
 test_that("R58: the logical switches refuse non-logical values instead of
            silently doing the opposite", {
+  skip_on_cran()
   # These are all documented as "Logical", but they were read with isTRUE(),
   # which treats every non-TRUE value as FALSE. Measured before the fix:
   # show_segments = 1, "yes", "TRUE" or NA all silently drew nothing, and --
@@ -1374,6 +1520,7 @@ test_that("R59: cpt_simulate() refuses parameters that make it emit NaN", {
 })
 
 test_that("R60: an out-of-range conf_level no longer hangs strucchange", {
+  skip_on_cran()
   set.seed(60)
   x <- c(rnorm(120), rnorm(120, 5))
 
@@ -1414,6 +1561,7 @@ test_that("R60: an out-of-range conf_level no longer hangs strucchange", {
 
 test_that("R61: cpm and kcp no longer report 'no changepoints' when the
            analysis never ran", {
+  skip_on_cran()
   set.seed(61)
   x <- c(rnorm(120), rnorm(120, 5))
 
@@ -1436,6 +1584,60 @@ test_that("R61: cpm and kcp no longer report 'no changepoints' when the
     expect_length(out, 0L)
   }
   expect_true(any(abs(cpm_wrapper(x, arl0 = 500)$changepoints$cp - 120) <= 5))
+
+  # Sampling supported values proves the guard fires; it does not prove the
+  # message's enumeration is complete, and it was not. The list stopped at
+  # 20000 while cpm ships thresholds up to 50000, so half the grid -- 300,
+  # 800, 900, 3000, 4000, 6000-9000, 30000, 40000, 50000 -- was documented
+  # as refused while working fine, sending a reader with a long series to a
+  # smaller arl0 than the engine can take. Derive the grid from the table
+  # cpm's own loadThresholds() indexes, so the message cannot drift from it.
+  th <- tryCatch(utils::getFromNamespace("cpmthresholds", "cpm"),
+                 error = function(e) NULL)
+  if (is.null(th)) skip("cpm no longer exposes cpmthresholds")
+  arl <- as.integer(sub("^.*ARL", "", names(th)))
+  # "ExponentialAdjusted" additionally ships 1-24; every type shares >= 100
+  grid <- sort(unique(arl[arl >= 100]))
+  msg <- tryCatch(cpm_wrapper(x, arl0 = 333), error = conditionMessage)
+  # regmatches() extracts from the string the positions were computed on, so
+  # both arguments have to be the same string -- passing `msg` with offsets
+  # measured on the trimmed tail slices the wrong substrings.
+  tail <- sub("^.*Supported values are ", "", msg)
+  listed <- as.integer(regmatches(tail, gregexpr("[0-9]+", tail))[[1]])
+  expect_setequal(listed, grid)
+  # the @param also claims the grid is identical for every cpm_type
+  expect_setequal(Reduce(intersect, split(arl, sub("ARL[0-9]+$", "", names(th)))),
+                  grid)
+  # and the values the truncated list denied do run, including the ceiling
+  for (a in c(300L, 3000L, 30000L, max(grid))) {
+    out <- capture.output(res <- cpm_wrapper(x, arl0 = a))
+    expect_s3_class(res, "ggcpt")
+    expect_length(out, 0L)
+  }
+
+  # The same printed line covers `lambda` as well, and the branch used to
+  # read it as an arl0 problem: `cpm_type = "FET", lambda = 0.5` was
+  # reported as "`arl0 = 500` is not an average run length", which is an
+  # argument the caller had set correctly. And FET without any `lambda`
+  # died inside cpm with base R's "only 0's may be mixed with negative
+  # subscripts", naming neither the argument nor the method.
+  b <- c(stats::rbinom(150, 1, 0.2), stats::rbinom(150, 1, 0.8))
+  expect_error(cpm_wrapper(b, cpm_type = "FET"), "needs a `lambda`")
+  expect_error(cpm_wrapper(b, cpm_type = "FET", lambda = 0.5),
+               "lambda = 0.5.*FET thresholds")
+  # ... and the arl0 message is still reached for a genuine arl0 problem
+  expect_error(cpm_wrapper(b, cpm_type = "FET", lambda = 0.3, arl0 = 333),
+               "average run length")
+  # the two values cpm does ship FET thresholds for both run
+  for (lam in c(0.1, 0.3)) {
+    out <- capture.output(res <- cpm_wrapper(b, cpm_type = "FET", lambda = lam))
+    expect_s3_class(res, "ggcpt")
+    expect_length(out, 0L)
+  }
+  # "ExponentialAdjusted" was described as rejected upstream alongside
+  # "GLRAdjusted"; it is not, so only the latter is withheld here
+  expect_error(cpm_wrapper(x, cpm_type = "GLRAdjusted"), "should be one of")
+  expect_s3_class(cpm_wrapper(abs(x) + 1, cpm_type = "Exponential"), "ggcpt")
 
   skip_if_not_installed("kcpRS")
   # kcp's permutation test needs a permutation distribution: nperm = 0 or
@@ -1530,7 +1732,10 @@ test_that("R66: a planned method is named as planned, not denied", {
   # does not.
   tb <- as.data.frame(cpt_methods())
   planned <- tb$method[tb$status == "planned"]
-  expect_setequal(planned, c("gfpop", "robust", "focus", "sbs"))
+  # Updated in 0.5.0: `changeforest` joined the table, and every method that
+  # was waiting only on a wrapper got one.
+  expect_setequal(planned,
+                  c("gfpop", "robust", "focus", "sbs", "changeforest"))
   for (m in planned) {
     expect_error(cpt_detect(rnorm(50), method = m),
                  "planned but not wired", info = m)
@@ -1544,9 +1749,11 @@ test_that("R66: a planned method is named as planned, not denied", {
   # planned rows carry no installed flag and every wired row does
   expect_true(all(is.na(tb$installed[tb$status == "planned"])))
   expect_false(any(is.na(tb$installed[tb$status == "available"])))
-  # `sbs` waits on the wrapper, not on CRAN: hdbinseg is back on CRAN (1.0.3,
-  # September 2025), while gfpop was removed and robseg/FOCuS never appeared
-  expect_identical(tb$target_release[tb$method == "sbs"], "next release")
-  expect_true(all(tb$target_release[tb$method %in% c("gfpop", "robust", "focus")] ==
+  # 0.5.0: every remaining planned method waits on CRAN, and nothing waits
+  # on a wrapper. `hdbinseg` was back at 1.0.3 when the 0.5.0 roadmap was
+  # written and is in the archive again, so `sbs` moved from "next release"
+  # to "when on CRAN" rather than into the wired table.
+  expect_true(all(tb$target_release[tb$status == "planned"] ==
                     "when on CRAN"))
+  expect_identical(tb$target_release[tb$method == "sbs"], "when on CRAN")
 })

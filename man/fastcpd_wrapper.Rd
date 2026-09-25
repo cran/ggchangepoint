@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-fastcpd.R
 \name{fastcpd_wrapper}
 \alias{fastcpd_wrapper}
-\title{fastcpd wrapper — fast changepoint detection via sequential gradient descent}
+\title{fastcpd wrapper: fast changepoint detection via sequential gradient descent}
 \usage{
 fastcpd_wrapper(
   x,
@@ -25,7 +25,14 @@ Defaults to \code{"mean"}.}
 \code{1} for AR, \code{c(1, 1)} otherwise.}
 
 \item{...}{Additional arguments passed to the corresponding
-\code{fastcpd::fastcpd.*()} function (e.g. \code{beta}, \code{trim}).}
+\code{fastcpd::fastcpd.*()} function (e.g. \code{beta}, \code{trim}).
+\code{beta} is \pkg{fastcpd}'s penalty: a number, or one of its own
+names (\code{"MBIC"}, the default, \code{"BIC"}, \code{"MDL"}). It is
+recorded on the result, so \code{print()} and \code{glance()} report
+the penalty the fit actually used. \code{\link{cpt_detect}()} forwards
+a numeric \code{penalty} here and translates the three names it shares
+with \pkg{fastcpd}; see the penalty-semantics section of
+\code{\link{cpt_penalty}()}.}
 }
 \value{
 A \code{ggcpt} object.
@@ -48,3 +55,49 @@ res$changepoints
 \references{
 \insertRef{li2024fastcpd}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

@@ -9,7 +9,9 @@ signal_stairs(n = 2000, seed = NULL)
 \arguments{
 \item{n}{Length of the signal. Defaults to 2000.}
 
-\item{seed}{Optional seed.}
+\item{seed}{Optional seed. The seed is scoped to this call:
+\code{.Random.seed} is saved and restored, so a seeded call inside a
+simulation loop does not pin the loop's own stream.}
 }
 \value{
 A tibble with columns \code{index} and \code{value}.
@@ -17,3 +19,17 @@ A tibble with columns \code{index} and \code{value}.
 \description{
 A monotonically stepping signal (staircase).
 }
+\examples{
+x <- signal_stairs(n = 500, seed = 2026)
+attr(x, "true_changepoints")   # ten steps, so nine changes
+cpt_detect(x$value, method = "pelt")$changepoints$cp
+}
+\seealso{
+Other test signals: 
+\code{\link{cpt_simulate}()},
+\code{\link{signal_blocks}()},
+\code{\link{signal_fms}()},
+\code{\link{signal_mix}()},
+\code{\link{signal_teeth}()}
+}
+\concept{test signals}

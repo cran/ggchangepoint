@@ -1,4 +1,4 @@
-#' inspect wrapper — high-dimensional changepoints via sparse projection
+#' inspect wrapper: high-dimensional changepoints via sparse projection
 #'
 #' Wraps \code{InspectChangepoint::inspect()} (Wang and Samworth, 2018). For
 #' a \eqn{p}-variate series whose mean changes in an unknown sparse subset of
@@ -33,6 +33,7 @@
 #'            rnorm(160))
 #' res <- inspect_wrapper(X)
 #' res$changepoints
+#' @family changepoint engines
 inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
   need_pkg("InspectChangepoint")
 
@@ -51,12 +52,58 @@ inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
                        call = match.call(), data_wide = mv_data_wide(X)))
   }
 
+  # The engine divides each coordinate by mad(diff(x)) / sqrt(2), which is
+  # zero whenever more than half of a coordinate's successive differences
+  # are equal: a 0/1 alternation, a noiseless step, a count series with
+  # long runs. That failed with base R's "missing value where TRUE/FALSE
+  # needed". A flat coordinate is dropped above because it carries nothing;
+  # one of these moves, and may carry the change, so it is refused by name
+  # rather than dropped.
+  no_scale <- vapply(seq_len(ncol(X_fit)), function(j) {
+    stats::mad(diff(X_fit[, j])) == 0
+  }, logical(1))
+  if (any(no_scale)) {
+    nm <- colnames(X_fit) %||% paste0("V", seq_len(ncol(X_fit)))
+    stop("`inspect` rescales each coordinate by the median absolute ",
+         "deviation of its successive differences, and that is zero for ",
+         paste(nm[no_scale], collapse = ", "), ": more than half of the ",
+         "differences are identical. Drop or jitter ",
+         if (sum(no_scale) > 1) "those coordinates" else "that coordinate",
+         ", or use a method that does not rescale this way, such as ",
+         "`ecp` or `kcp`.", call. = FALSE)
+  }
+  # Forwarded unchecked, `NA` failed with "missing value where TRUE/FALSE
+  # needed", a vector with "the condition has length > 1", a string ran
+  # (as a lambda, with the default; as a threshold, finding nothing), and a
+  # negative threshold put a changepoint at nearly every observation.
+  if (!is.null(lambda)) validate_scalar(lambda, "lambda", min = 0)
+  if (!is.null(threshold)) validate_scalar(threshold, "threshold", min = 0)
   args <- list(x = t(X_fit), ...)
   if (!is.null(lambda)) args$lambda <- lambda
   if (!is.null(threshold)) args$threshold <- threshold
 
-  # The engine prints Monte Carlo progress; keep the console clean.
-  utils::capture.output(fit <- do.call(InspectChangepoint::inspect, args))
+  # The engine prints Monte Carlo progress; keep the console clean. That
+  # took stdout only, which is not all of it: `inspect()` and
+  # `sparse.svd()` both call requireNamespace("RSpectra") without
+  # `quietly = TRUE`, and RSpectra is merely *suggested* by
+  # InspectChangepoint -- so on a machine holding the engine but not
+  # RSpectra (the Windows CI runner, for one) every call writes "Loading
+  # required namespace" and "Failed with error: there is no package called
+  # 'RSpectra'". The engine handles the absence itself, falling back to
+  # base::svd, so it is a loading diagnostic rather than a problem -- but
+  # it is not ours to print, and thirteen repetitions of it are what
+  # truncated a CI test log down to nothing else.
+  #
+  # suppressMessages() is not enough and was tried first: only "Loading
+  # required namespace" is a condition, while requireNamespace() writes the
+  # "Failed with error" line straight to stderr. Capturing the message
+  # stream is what silences it. Warning *conditions* still reach the
+  # caller and errors still propagate -- both verified -- because only the
+  # stream is redirected, not the condition system.
+  ignore <- utils::capture.output(
+    inner <- utils::capture.output(
+      fit <- do.call(InspectChangepoint::inspect, args),
+      type = "message"))
 
   cp_mat <- fit$changepoints
   cp_indices <- if (is.null(cp_mat)) integer(0) else as.integer(cp_mat[, "location"])
@@ -76,7 +123,7 @@ inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
   )
 }
 
-#' ocd wrapper — online high-dimensional changepoint detection
+#' ocd wrapper: online high-dimensional changepoint detection
 #'
 #' Wraps the \code{ocd} package (Chen, Wang and Samworth, 2022): online
 #' multiscale detection of a mean change in a high-dimensional stream, with
@@ -97,8 +144,8 @@ inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
 #'   \code{max(20, floor(0.2 * n))}, capped at \code{n/2}.
 #' @param thresh Threshold specification passed to
 #'   \code{ocd::ChangepointDetector()}; \code{"MC"} (default) calibrates by
-#'   Monte Carlo, which is what makes this the slowest wrapper — see the
-#'   timing note below. Supplying the three thresholds directly, as a named
+#'   Monte Carlo, which is what makes this the slowest wrapper (see the
+#'   timing note below). Supplying the three thresholds directly, as a named
 #'   numeric vector \code{c(diag =, off_d =, off_s =)}, skips calibration
 #'   altogether.
 #' @param patience Target average run length to false alarm. Defaults to
@@ -112,19 +159,30 @@ inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
 #'   \code{ocd::ChangepointDetector()}.
 #' @return A \code{ggcpt} object. Because the detector is online, reported
 #'   locations are \emph{declaration times} (the changepoint plus the
-#'   detection delay), stored together with a \code{declared_at} column.
+#'   detection delay). The \code{declared_at} column holds the same values
+#'   as \code{cp}, and deliberately: \pkg{ocd} declares a change without
+#'   also estimating where it began, so there is no separate location for
+#'   the second column to carry. Compare \code{\link{cpm_wrapper}()},
+#'   whose engine supplies both, and whose \code{cp} is an estimated
+#'   location with \code{detection_time} strictly later.
 #' @section How long this takes:
 #' Nearly all of the run time is \code{ocd}'s Monte Carlo threshold
 #' calibration, which happens before a single observation is read. It is
-#' linear in \code{mc_reps} and grows with the number of coordinates:
-#' measured at \code{mc_reps = 5}, construction takes about 3 s at
-#' \eqn{p = 3}, 9 s at \eqn{p = 10} and 55 s at \eqn{p = 50}, and four
-#' times as long at \code{mc_reps = 20}. At the default \code{mc_reps = 100}
-#' that extrapolates to roughly a minute at \eqn{p = 3} and a quarter of an
-#' hour at \eqn{p = 50}. Monitoring the observations afterwards is cheap by
-#' comparison — well under a second for a thousand of them. Lower
-#' \code{mc_reps} while exploring, or pass \code{thresh} directly to skip
-#' calibration entirely.
+#' linear in \code{mc_reps} and grows with the number of coordinates. Timed
+#' on one Linux x86-64 machine at \code{mc_reps = 5}, construction took
+#' about 10 s at \eqn{p = 3}, 22 s at \eqn{p = 10} and 113 s at
+#' \eqn{p = 50}; raising \code{mc_reps} scales it linearly, so at
+#' \eqn{p = 3} it was 38 s at \code{mc_reps = 20} and 189 s at the default
+#' \code{mc_reps = 100}. The practical reading is that the default costs
+#' \emph{minutes} rather than seconds even for a handful of coordinates,
+#' and better than half an hour at \eqn{p = 50}. Another machine will give
+#' different absolute numbers; the linearity in \code{mc_reps} is the part
+#' to plan around. Monitoring the observations afterwards is cheap by
+#' comparison: 0.37 s for a thousand of them at \eqn{p = 3}. Lower
+#' \code{mc_reps} while exploring (the example below uses 2, which
+#' measures 3.8 s), or pass \code{thresh} directly to skip
+#' calibration entirely, which brings the same fit down to a tenth of a
+#' second.
 #'
 #' @references
 #' \insertRef{chen2022ocd}{ggchangepoint}
@@ -133,21 +191,44 @@ inspect_wrapper <- function(x, lambda = NULL, threshold = NULL, ...) {
 #' \donttest{
 #' set.seed(2026)
 #' X <- rbind(matrix(rnorm(60 * 3), 60), matrix(rnorm(40 * 3, 3), 40))
-#' res <- ocd_wrapper(X, mc_reps = 5)
+#' # `mc_reps = 2`, not the default 100 and not the 5 this example used to
+#' # pass: the calibration is linear in `mc_reps` and is nearly all of the
+#' # cost, so 5 measured 9.7 s here against CRAN's 5 s budget and 2
+#' # measures 3.8 s for the same answer. Neither is a calibration you
+#' # would trust -- see the timing section above.
+#' res <- ocd_wrapper(X, mc_reps = 2)
 #' res$changepoints
 #' }
+#' @family changepoint engines
 ocd_wrapper <- function(x, train = NULL, thresh = "MC", patience = 5000,
                         beta = 1, mc_reps = 100, ...) {
   need_pkg("ocd")
+  reject_renamed_args(list(...), "ocd")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(patience, "patience", min = 1)
+  validate_scalar(mc_reps, "mc_reps", min = 1)
+  # `beta = 0` or `NA` failed with "missing value where TRUE/FALSE needed",
+  # and a vector ran. ocd's beta is a lower bound on the size of the mean
+  # change, so it has to be positive.
+  validate_scalar(beta, "beta", min = 0, min_open = TRUE)
 
   validate_data(x)
   X <- if (is.matrix(x) || is.data.frame(x)) as_mv_matrix(x)
        else matrix(as.numeric(x), ncol = 1)
   n <- nrow(X)
   p <- ncol(X)
-  # ocd::ChangepointDetector() fails to construct at dim = 1 ("subscript out
-  # of bounds"): the method projects across coordinates, so it needs at
-  # least two. Say so rather than surfacing the engine's internal error.
+  # ocd::ChangepointDetector() fails to construct at dim = 1 under this
+  # wrapper's default thresh = "MC", where the Monte Carlo threshold search
+  # ends in "'dims' cannot be of length 0": the method projects across
+  # coordinates, so it needs at least two. (With an explicit numeric
+  # `thresh` the constructor does succeed at dim = 1, which is why the
+  # shape is checked here rather than left to the engine -- the failure
+  # depends on an argument the caller may never have set.) Say so rather
+  # than surfacing the engine's internal error.
   if (p < 2) {
     stop("Method `ocd` is high-dimensional and needs at least two ",
          "coordinates, but `x` has ", p,
@@ -158,6 +239,9 @@ ocd_wrapper <- function(x, train = NULL, thresh = "MC", patience = 5000,
   if (is.null(train)) {
     train <- max(20L, floor(0.2 * n))
   }
+  # `NA` and strings reached `min()` below and failed with "missing value
+  # where TRUE/FALSE needed", and `c(2, 3)` trained on two observations.
+  validate_scalar(train, "train", min = 2)
   train <- min(as.integer(train), floor(n / 2))
   if (train < 2) {
     stop("`train` must be at least 2 observations.", call. = FALSE)
@@ -183,9 +267,18 @@ ocd_wrapper <- function(x, train = NULL, thresh = "MC", patience = 5000,
     utils::capture.output(detector <- ocd::getData(detector, z))
     if (!identical(ocd::status(detector), "monitoring")) {
       declared <- c(declared, i)
-      if (i + 2 > n) break  # no room to re-train after the declaration
+      # Stop monitoring rather than re-train on a window the baseline cannot
+      # be estimated from. `i + 2 > n` only guaranteed TWO remaining
+      # observations, and a per-coordinate sd from two points is noise for a
+      # high-dimensional stream -- `s[s == 0 | is.na(s)] <- 1` catches only
+      # the fully degenerate case, so everything after such a re-training
+      # was standardised by a scale estimate that was wrong rather than
+      # missing, and spurious later declarations are the expected result.
+      # The re-training window now has to clear the same floor `train` was
+      # validated against.
+      if (n - i < train) break
       detector <- ocd::reset(detector)
-      # Re-estimate the baseline from a window after the declaration —
+      # Re-estimate the baseline from a window after the declaration:
       # keeping the pre-change baseline would re-declare immediately on the
       # shifted regime.
       new_train <- seq(i + 1, min(i + train, n))
@@ -204,6 +297,10 @@ ocd_wrapper <- function(x, train = NULL, thresh = "MC", patience = 5000,
     fit = detector,
     call = match.call(),
     extra_cp_cols = if (length(declared) > 0) {
+      # The same values as `cp`, because ocd declares a change without
+      # estimating where it began -- see @return. Kept as a column so the
+      # online engines have one name for "when the alarm fired" whether or
+      # not the engine also estimates a location.
       list(declared_at = as.integer(declared))
     },
     data_wide = mv_data_wide(X)
@@ -236,6 +333,7 @@ ocd_wrapper <- function(x, train = NULL, thresh = "MC", patience = 5000,
 #' X <- rbind(matrix(rnorm(100 * 4), 100), matrix(rnorm(100 * 4, 2), 100))
 #' res <- geomcp_wrapper(X)
 #' res$changepoints
+#' @family changepoint engines
 geomcp_wrapper <- function(x, penalty = "MBIC",
                            mapping = c("both", "distance", "angle"), ...) {
   need_pkg("changepoint.geo")
@@ -243,6 +341,16 @@ geomcp_wrapper <- function(x, penalty = "MBIC",
 
   validate_data(x)
   X <- as_mv_matrix(x)
+  # changepoint.geo answers "Univariate changepoint analysis is not
+  # supported" on a single column -- clearer than base R, but it names
+  # neither the method nor the argument, so a reader with several methods in
+  # flight cannot tell which call failed. Match the other eight
+  # multivariate-only engines.
+  if (ncol(X) < 2) {
+    stop("Method `geomcp` is high-dimensional and needs at least two ",
+         "coordinates, but `x` has ", ncol(X),
+         ". See cpt_methods() for univariate methods.", call. = FALSE)
+  }
   data_vec <- as.numeric(X[, 1])
 
   fit <- changepoint.geo::geomcp(X, penalty = penalty, ...)

@@ -4,6 +4,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.width = 8,
   fig.height = 6,
+  dpi = 72,
   message = FALSE,
   warning = FALSE,
   fig.alt = "ggchangepoint plot comparing changepoint detection methods on a time series"
@@ -29,17 +30,17 @@ cmp_methods <- if (has_fpop && has_wbs) {
   c("pelt", "binseg", "segneigh")
 }
 
-## ----compare-facet------------------------------------------------------------
+## ----compare-facet, fig.alt = "One panel per method, each showing the same series with that method's changepoints"----
 set.seed(2024)
 x <- c(rnorm(150, 0), rnorm(150, 3), rnorm(200, 1))
 ggcpt_compare(x, methods = cmp_methods)
 
-## ----compare-nochange---------------------------------------------------------
+## ----compare-nochange, fig.alt = "The same comparison on a series with no change: one panel per method, showing whatever each reports"----
 set.seed(7)
 x_null <- rnorm(300)
 ggcpt_compare(x_null, methods = c("pelt", "binseg"))
 
-## ----compare-overlay----------------------------------------------------------
+## ----compare-overlay, fig.alt = "Every method's changepoints overlaid on one copy of the series, coloured by method"----
 ggcpt_compare(x, methods = cmp_methods, layout = "overlay")
 
 ## ----compare-table------------------------------------------------------------
@@ -82,13 +83,13 @@ ggcpt_eval(pred, truth, data_vec = x, margin = 5)
 cpt_metrics(pred, truth, n = length(x), margin = 5)
 
 ## ----smuce-ci, eval = has_stepR, fig.alt = "Series with the SMUCE step fit overlaid and confidence-interval whiskers for each estimated changepoint location"----
-# res_smuce <- smuce_wrapper(x)
-# tidy(res_smuce)
-# autoplot(res_smuce, show_ci = TRUE, show_fit = TRUE)
+res_smuce <- smuce_wrapper(x)
+tidy(res_smuce)
+autoplot(res_smuce, show_ci = TRUE, show_fit = TRUE)
 
 ## ----strucchange-ci, eval = has_strucchange-----------------------------------
-# res_bp <- strucchange_wrapper(x)
-# tidy(res_bp)
+res_bp <- strucchange_wrapper(x)
+tidy(res_bp)
 
 ## ----stability, fig.alt = "Bootstrap detection-frequency profile along the series index, with the original changepoints marked as dashed rules"----
 st <- cpt_stability(x, method = "pelt", B = 30, seed = 1)

@@ -12,11 +12,28 @@
 #'   vector of segment means. For \code{var} changes, a vector of segment sds.
 #'   For \code{meanvar}, a list of lists with \code{mean} and \code{sd} per
 #'   segment. For \code{slope}, a list with \code{intercept} and \code{slope}
-#'   per segment. When \code{NULL}, every segment gets the same neutral
-#'   parameters, so the series has no actual change. Supplying fewer entries
-#'   than there are segments recycles the last one and warns, because the
-#'   trailing \code{changepoints} would then be recorded as ground truth
-#'   without a change behind them.
+#'   per segment, and the time origin \strong{resets in every segment}:
+#'   segment \eqn{i}'s signal is
+#'   \eqn{\mathrm{intercept}_i + \mathrm{slope}_i \cdot (1, \ldots, l_i)}
+#'   with the clock restarting at 1, so each intercept is the level its
+#'   segment starts from. For a continuous piecewise-linear signal, start
+#'   each segment where the previous one ended,
+#'   \eqn{\mathrm{intercept}_{i+1} = \mathrm{intercept}_i +
+#'   \mathrm{slope}_i \, l_i}: with a change at 100,
+#'   \code{list(list(intercept = 0, slope = 1), list(intercept = 100,
+#'   slope = -1))} rises to 100 and falls from there without a jump. A
+#'   caller reasoning in absolute time, who writes segment 2 as the line
+#'   \eqn{200 - t} (\code{intercept = 200}), gets it starting at 199
+#'   instead of 99: the slope change plus an unrequested level jump. (Equal
+#'   intercepts are continuous only when the earlier segment is flat.) When \code{NULL}, every segment gets the same neutral
+#'   parameters, so the series has no actual change. \code{changepoints}
+#'   sets the number of segments (\eqn{k} changepoints make \eqn{k + 1}
+#'   of them), and a mismatch in either direction warns rather than
+#'   passing quietly: too few entries recycles the last one, so the
+#'   trailing \code{changepoints} would otherwise be recorded as ground
+#'   truth with no change behind them, and too many drops the surplus, so a
+#'   caller who miscounted the changepoints would otherwise get an ordinary
+#'   series back with a parameter silently unused.
 #' @param noise Noise type: \code{"gauss"} (Gaussian), \code{"t"} (Student-t),
 #'   \code{"ar1"} (AR(1)), or \code{"rw"} (random walk).
 #' @param sd Noise standard deviation, non-negative (for Gaussian and t;
@@ -26,8 +43,24 @@
 #'   exists. Defaults to 3.
 #' @param rho AR(1) autocorrelation parameter, strictly between -1 and 1 for
 #'   stationarity. Defaults to 0. Used only when \code{noise = "ar1"}.
-#' @param seed Optional seed for reproducibility.
-#'
+#' @param seasonality Optional seasonal component added to the signal, as a
+#'   list with \code{period} and \code{amplitude} (and optionally
+#'   \code{phase}, in radians, and \code{shape}, either \code{"sine"}
+#'   (the default) or \code{"sawtooth"}). A seasonal series is where the
+#'   difference between a real level shift and a phase artefact starts to
+#'   matter, and it is what \code{\link{bfast_wrapper}()} is built for; a
+#'   detector that has never been shown one is untested against the case its
+#'   users have.
+#' @param sd_trend Optional smoothly varying noise scale: a length-2 numeric
+#'   giving the multiplier on \code{sd} at the first and last observation,
+#'   interpolated log-linearly in between. Distinct from
+#'   \code{change_in = "var"}, which is piecewise constant: this is the
+#'   \emph{gradual} heteroscedasticity that makes constant-variance
+#'   detectors shatter, and the condition HSMUCE, NSP-self-normalised and
+#'   \pkg{fastcpd}'s variance families exist to handle.
+#' @param seed Optional seed for reproducibility. The seed is scoped to this
+#'   call: \code{.Random.seed} is saved and restored, so a seeded call
+#'   inside a simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index}, \code{value}, and \code{seg_id}.
 #'   The true changepoints are stored in the \code{true_changepoints} attribute.
 #' @export
@@ -36,6 +69,14 @@
 #' dat <- cpt_simulate(200, changepoints = c(100), change_in = "mean",
 #'                     params = c(0, 10), seed = 2022)
 #' attr(dat, "true_changepoints")
+#'
+#' # a seasonal series with a level shift, and one with drifting noise
+#' seasonal <- cpt_simulate(240, changepoints = 120, params = c(0, 3),
+#'                          seasonality = list(period = 12, amplitude = 2),
+#'                          seed = 1)
+#' drifting <- cpt_simulate(240, changepoints = 120, params = c(0, 3),
+#'                          sd_trend = c(0.5, 3), seed = 1)
+#' @family test signals
 cpt_simulate <- function(n,
                          changepoints = integer(),
                          change_in = c("mean", "var", "meanvar", "slope"),
@@ -44,11 +85,16 @@ cpt_simulate <- function(n,
                          sd = 1,
                          df = 3,
                          rho = 0,
+                         seasonality = NULL,
+                         sd_trend = NULL,
                          seed = NULL) {
 
   change_in <- match.arg(change_in)
   noise <- match.arg(noise)
-  validate_scalar(n, "n", min = 1)
+  # `min = 3`, matching validate_data(): at n < 3 the simulator handed back
+  # a tibble every consumer in the package then refuses, which is a
+  # confusing place to learn the limit.
+  validate_scalar(n, "n", min = 3)
   validate_scalar(sd, "sd", min = 0)
   # rho only enters the AR(1) path, and |rho| >= 1 makes the innovation scale
   # sqrt(1 - rho^2) NaN (or zero), so the whole series comes back NaN with no
@@ -59,10 +105,31 @@ cpt_simulate <- function(n,
                     min_open = TRUE, max_open = TRUE)
   }
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
-  changepoints <- sort(unique(as.integer(changepoints)))
-  changepoints <- changepoints[changepoints > 0 & changepoints < n]
+  changepoints <- as_cp_locations(changepoints, "changepoints", sort = TRUE)
+  # Out-of-range locations are dropped, and `attr(res, "true_changepoints")`
+  # below records the *filtered* set -- so this used to return a series with
+  # ground truth the caller never asked for and no indication of it:
+  # `cpt_simulate(200, changepoints = c(100, 500))` gave a one-changepoint
+  # series whose truth was 100, silently.
+  #
+  # That is the same corruption the two `params` checks below were added to
+  # prevent ("corrupt ground truth for benchmarking", in their own words),
+  # and the same silent drop `as_ggcpt()` was changed to report this cycle.
+  # cpt_datasets() and cpt_benchmark() read that attribute directly, so a
+  # discarded location becomes a scoring error nobody can see.
+  keep <- changepoints > 0 & changepoints < n
+  if (any(!keep)) {
+    warning("`changepoints`: ", sum(!keep), " of ", length(changepoints),
+            " outside 1..", n - 1L, " (",
+            paste(utils::head(changepoints[!keep], 5), collapse = ", "),
+            if (sum(!keep) > 5) ", ..." else "",
+            ") and dropped. The ground truth recorded on the result is the ",
+            "set that survived, so a benchmark scored against it would not ",
+            "see the difference.", call. = FALSE)
+  }
+  changepoints <- changepoints[keep]
 
   # Build segment boundaries
   seg_ends <- unique(c(changepoints, n))
@@ -92,12 +159,63 @@ cpt_simulate <- function(n,
             " segments; the last value is reused, so the extra ",
             "segments carry no actual change.", call. = FALSE)
   }
+  # ...and the other direction was silent. `n` changepoints make `n + 1`
+  # segments, which is the arithmetic easiest to get wrong: supplying three
+  # segment means against one changepoint uses the first two and drops the
+  # third without a word, and the series that comes back is a perfectly
+  # ordinary two-segment one. The caller who wrote three parameters meant
+  # two changepoints. Same asymmetry the too-few branch above already
+  # refused to accept, in the direction nothing was checking.
+  if (length(params) > n_seg) {
+    warning("`params` has ", length(params), " value(s) but ",
+            length(changepoints), " changepoint(s) make only ", n_seg,
+            " segment(s), so the last ", length(params) - n_seg,
+            " are unused. `changepoints` sets the number of segments, not ",
+            "`params`.", call. = FALSE)
+  }
+
+  # "slope" is the one change type whose per-segment parameters are not
+  # numbers: each segment needs an `intercept` and a `slope`. `mean` and
+  # `var` take an atomic vector, so `params = c(0, 1)` is the natural
+  # mistake -- and it reached `p$intercept` on an atomic value, which is base
+  # R's "$ operator is invalid for atomic vectors": a message naming neither
+  # the argument nor the shape it wanted. The "meanvar" branch guards for
+  # the same reason; this one did not.
+  if (identical(change_in, "slope")) {
+    ok <- is.list(params) && length(params) > 0 &&
+      all(vapply(params, function(p) {
+        is.list(p) && all(c("intercept", "slope") %in% names(p)) &&
+          is.numeric(p[["intercept"]]) && is.numeric(p[["slope"]])
+      }, logical(1)))
+    if (!ok) {
+      stop("`change_in = \"slope\"` needs `params` to be a list with one ",
+           "`list(intercept = , slope = )` per segment, e.g. ",
+           "`params = list(list(intercept = 0, slope = 0.1), ",
+           "list(intercept = 5, slope = -0.2))`. Got ",
+           if (is.list(params)) "a list of something else" else
+             paste0("a ", class(params)[1], " vector"), ".", call. = FALSE)
+    }
+  }
 
   # Build the per-observation signal (mean) and noise scale (sd). For "var"
   # and "meanvar" the per-segment standard deviation is applied to the noise,
   # so a change in variance is genuinely simulated.
   signal <- numeric(n)
   sd_vec <- rep(sd, n)
+  # A smooth multiplier on the scale, log-linear so that c(0.5, 3) means
+  # "half at the start, triple at the end" on the multiplicative scale the
+  # eye reads a variance change on. Applied before the per-segment scales so
+  # the two compose rather than one overwriting the other.
+  if (!is.null(sd_trend)) {
+    if (!is.numeric(sd_trend) || length(sd_trend) != 2L ||
+        any(!is.finite(sd_trend)) || any(sd_trend <= 0)) {
+      stop("`sd_trend` must be two positive finite numbers: the noise-scale ",
+           "multiplier at the first and last observation.", call. = FALSE)
+    }
+    mult <- exp(seq(log(sd_trend[1]), log(sd_trend[2]), length.out = n))
+  } else {
+    mult <- rep(1, n)
+  }
 
   for (i in seq_len(n_seg)) {
     idx <- seg_starts[i]:seg_ends[i]
@@ -118,15 +236,33 @@ cpt_simulate <- function(n,
       }
     } else if (change_in == "slope") {
       p <- params[[j]]
+      # The clock restarts at 1 in every segment (documented in @param
+      # params): the intercept is the segment's own starting level, not a
+      # level at absolute time zero.
       t_vals <- seq_along(idx)
       signal[idx] <- p$intercept + p$slope * t_vals
     }
   }
 
+  # The seasonal component is part of the SIGNAL, not the noise: it is
+  # deterministic and it does not move the changepoints, so `params` and
+  # `true_changepoints` keep their meaning.
+  if (!is.null(seasonality)) {
+    signal <- signal + seasonal_component(seasonality, n)
+  }
+
+  sd_vec <- sd_vec * mult
+
   # Generate noise, honouring the per-observation scale sd_vec
   if (noise == "gauss") {
     errors <- stats::rnorm(n, mean = 0, sd = sd_vec)
   } else if (noise == "t") {
+    # validate_scalar() first, for the same reason `rho` above gets it: a
+    # bare `if (df <= 2)` answers "missing value where TRUE/FALSE needed"
+    # for df = NA and "invalid arguments" for df = "a", neither of which
+    # names the argument. The domain message is kept, because "must exceed
+    # 2" is worth saying with its reason.
+    validate_scalar(df, "df")
     if (df <= 2) {
       stop("`df` must exceed 2 so the t-noise variance exists.", call. = FALSE)
     }
@@ -164,7 +300,37 @@ cpt_simulate <- function(n,
 
   attr(res, "true_changepoints") <- changepoints
   attr(res, "true_segments") <- seg_tbl
+  attr(res, "signal") <- signal
   res
+}
+
+# Internal: the deterministic seasonal component.
+#' @noRd
+seasonal_component <- function(seasonality, n) {
+  if (!is.list(seasonality)) {
+    stop("`seasonality` must be a list with `period` and `amplitude`.",
+         call. = FALSE)
+  }
+  period <- seasonality$period
+  amplitude <- seasonality$amplitude
+  phase <- seasonality$phase %||% 0
+  shape <- seasonality$shape %||% "sine"
+  validate_scalar(period, "seasonality$period", min = 2)
+  validate_scalar(amplitude, "seasonality$amplitude", min = 0)
+  validate_scalar(phase, "seasonality$phase")
+  shape <- match.arg(shape, c("sine", "sawtooth"))
+  if (period > n) {
+    warning("`seasonality$period` (", period, ") exceeds the series length (",
+            n, "), so less than one cycle is simulated.", call. = FALSE)
+  }
+  t <- seq_len(n)
+  if (shape == "sine") {
+    amplitude * sin(2 * pi * (t - 1) / period + phase)
+  } else {
+    # A sawtooth on [-amplitude, amplitude], phase-shifted in the same units.
+    frac <- ((t - 1) / period + phase / (2 * pi)) %% 1
+    amplitude * (2 * frac - 1)
+  }
 }
 
 #' @rdname cpt_simulate
@@ -179,14 +345,22 @@ rcpt <- function(...) cpt_simulate(...)
 #' The classic Donoho-Johnstone blocks test signal with known changepoints.
 #'
 #' @param n Length of the signal. Defaults to 2048.
-#' @param seed Optional seed.
+#' @param seed Optional seed. The seed is scoped to this call:
+#'   \code{.Random.seed} is saved and restored, so a seeded call inside a
+#'   simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index} and \code{value}. The \code{true_changepoints}
 #'   attribute contains the known changepoint locations.
 #' @export
 #' @references Donoho, D. L. and Johnstone, I. M. (1994). Ideal spatial adaptation
 #'   by wavelet shrinkage. \emph{Biometrika}, 81(3), 425-455.
+#' @family test signals
+#' @examples
+#' x <- signal_blocks(seed = 2026)
+#' attr(x, "true_changepoints")
+#' # PELT recovers all eleven Donoho-Johnstone jumps
+#' cpt_detect(x$value, method = "pelt")$changepoints$cp
 signal_blocks <- function(n = 2048, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
   if (n < 100) {
     stop("`n` must be at least 100 for the blocks signal.", call. = FALSE)
   }
@@ -225,11 +399,19 @@ signal_blocks <- function(n = 2048, seed = NULL) {
 #' A piecewise-constant test signal from the WBS/NOT literature.
 #'
 #' @param n Length of the signal. Defaults to 2000.
-#' @param seed Optional seed.
+#' @param seed Optional seed. The seed is scoped to this call:
+#'   \code{.Random.seed} is saved and restored, so a seeded call inside a
+#'   simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index} and \code{value}.
 #' @export
+#' @family test signals
+#' @examples
+#' x <- signal_fms(seed = 2026)
+#' cp <- cpt_detect(x$value, method = "pelt")$changepoints$cp
+#' # the smallest jumps (0.5, against noise sd 0.5) are the ones missed
+#' cpt_metrics(cp, attr(x, "true_changepoints"), n = nrow(x))$covering
 signal_fms <- function(n = 2000, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
   if (n < 40) {
     stop("`n` must be at least 40 for the fms signal.", call. = FALSE)
   }
@@ -256,11 +438,20 @@ signal_fms <- function(n = 2000, seed = NULL) {
 #' A piecewise-constant/linear signal from the literature.
 #'
 #' @param n Length of the signal. Defaults to 2000.
-#' @param seed Optional seed.
+#' @param seed Optional seed. The seed is scoped to this call:
+#'   \code{.Random.seed} is saved and restored, so a seeded call inside a
+#'   simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index} and \code{value}.
 #' @export
+#' @family test signals
+#' @examples
+#' x <- signal_mix(seed = 2026)
+#' attr(x, "true_changepoints")
+#' # the linear ramps are not level shifts, so a mean-change detector puts
+#' # changepoints inside them rather than at the segment joins
+#' cpt_detect(x$value, method = "pelt")$changepoints$cp
 signal_mix <- function(n = 2000, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
   if (n < 40) {
     stop("`n` must be at least 40 for the mix signal.", call. = FALSE)
   }
@@ -291,11 +482,18 @@ signal_mix <- function(n = 2000, seed = NULL) {
 #' A piecewise-constant signal with regularly spaced changepoints.
 #'
 #' @param n Length of the signal. Defaults to 2000.
-#' @param seed Optional seed.
+#' @param seed Optional seed. The seed is scoped to this call:
+#'   \code{.Random.seed} is saved and restored, so a seeded call inside a
+#'   simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index} and \code{value}.
 #' @export
+#' @family test signals
+#' @examples
+#' x <- signal_teeth(n = 600, seed = 2026)
+#' attr(x, "true_changepoints")   # a change every 100 observations
+#' cpt_detect(x$value, method = "pelt")$changepoints$cp
 signal_teeth <- function(n = 2000, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   teeth_width <- 100
   n_teeth <- floor(n / teeth_width)
@@ -323,11 +521,18 @@ signal_teeth <- function(n = 2000, seed = NULL) {
 #' A monotonically stepping signal (staircase).
 #'
 #' @param n Length of the signal. Defaults to 2000.
-#' @param seed Optional seed.
+#' @param seed Optional seed. The seed is scoped to this call:
+#'   \code{.Random.seed} is saved and restored, so a seeded call inside a
+#'   simulation loop does not pin the loop's own stream.
 #' @return A tibble with columns \code{index} and \code{value}.
 #' @export
+#' @family test signals
+#' @examples
+#' x <- signal_stairs(n = 500, seed = 2026)
+#' attr(x, "true_changepoints")   # ten steps, so nine changes
+#' cpt_detect(x$value, method = "pelt")$changepoints$cp
 signal_stairs <- function(n = 2000, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   n_steps <- 10
   step_size <- n %/% n_steps

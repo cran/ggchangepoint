@@ -13,17 +13,79 @@
 #' @details Precision/recall use a one-to-one matching: each truth may be
 #' claimed by at most one prediction (predictions are scanned in order and
 #' take the earliest unmatched truth within \code{margin}, which yields a
-#' maximum matching for interval-structured problems). When \code{pred} and
-#' \code{truth} are both empty the segmentation is exactly right, so
-#' precision, recall, and F1 are all 1. The covering metric follows
-#' van den Burg and Williams (2020): the prediction-side partition is always
-#' well defined, so an empty \code{pred} scores the covering of the trivial
-#' single-segment partition rather than 0.
+#' maximum matching for interval-structured problems). The covering metric
+#' follows van den Burg and Williams (2020): the prediction-side partition is
+#' always well defined, so an empty \code{pred} scores the covering of the
+#' trivial single-segment partition rather than 0.
 #'
-#' @return A tibble with columns: \code{n}, \code{n_pred}, \code{n_truth},
-#'   \code{precision}, \code{recall}, \code{f1}, \code{covering},
-#'   \code{hausdorff}, \code{rand_index}, \code{annotation_error},
-#'   \code{mae_matched}, \code{rmse_matched}.
+#' @section Degenerate cases, and which way each metric resolves them:
+#' Three of the twelve columns are ratios with a zero denominator when one
+#' side is empty, and the row does not resolve them all the same way, so the
+#' conventions are worth stating rather than inferring from a benchmark
+#' table:
+#' \itemize{
+#'   \item \strong{Both empty.} The segmentation is exactly right:
+#'     \code{precision}, \code{recall}, \code{f1}, \code{covering} and
+#'     \code{rand_index} are all 1 and \code{annotation_error} is 0. (A
+#'     metric that scored this 0 was a 0.4.0 bug.)
+#'   \item \strong{One side empty.} \code{precision} and \code{recall} are
+#'     \emph{0} rather than \code{NA} (finding nothing where there was a
+#'     change, and finding a change where there was none, both score badly),
+#'     and so is \code{f1}. \code{rand_index} is 0 for the same reason.
+#'   \item \strong{Nothing matched.} \code{hausdorff},
+#'     \code{mae_matched} and \code{rmse_matched} are \code{NA}, because
+#'     they are distances and there is no pair to measure. They are also
+#'     \code{NA} whenever either side is empty. This is the one place the
+#'     row mixes conventions: an all-wrong answer gives
+#'     \code{f1 = 0} and \code{mae_matched = NA} in the same row.
+#'     \code{\link{cpt_benchmark}()} treats an \code{NA} as the worst rank
+#'     rather than dropping it.
+#' }
+#' An index outside \code{1..(n - 1)} is dropped with a warning: locations
+#' follow the \code{"left"} convention, and an out-of-range one would
+#' corrupt the partition metrics rather than merely miss.
+#'
+#' @return A tibble with one row and the columns below. \dQuote{Higher} and
+#'   \dQuote{lower} mark which direction is better, the same directions
+#'   \code{\link{cpt_benchmark}()} ranks by.
+#'   \describe{
+#'     \item{\code{n}, \code{n_pred}, \code{n_truth}}{the series length
+#'       and the two changepoint counts, after out-of-range indices are
+#'       dropped.}
+#'     \item{\code{precision}, \code{recall}, \code{f1}}{higher is
+#'       better. The fraction of predictions that matched a truth, the
+#'       fraction of truths that were matched, and their harmonic mean,
+#'       all under the one-to-one matching within \code{margin}, so they
+#'       score \emph{whether} a change was found, not how precisely it was
+#'       located.}
+#'     \item{\code{covering}}{higher is better, in \eqn{[0, 1]}. The
+#'       segmentation covering metric: each true segment's best Jaccard
+#'       overlap with a predicted segment, averaged weighted by segment
+#'       length. Unlike F1 it needs no margin and degrades smoothly with
+#'       location error.}
+#'     \item{\code{hausdorff}}{lower is better, in observations. The
+#'       largest distance from any changepoint on either side to the nearest
+#'       one on the other: a worst-case location error, so one badly placed
+#'       changepoint dominates it.}
+#'     \item{\code{rand_index}}{higher is better. The \emph{adjusted}
+#'       Rand index between the two segment labellings: 1 for identical
+#'       partitions, 0 for chance agreement, and negative for worse than
+#'       chance.}
+#'     \item{\code{annotation_error}}{lower is better. \strong{A count
+#'       difference only}: \code{abs(n_pred - n_truth)}. It says nothing
+#'       about location, so a segmentation with the right \emph{number} of
+#'       changepoints in entirely the wrong \emph{places} scores a perfect
+#'       0. Read it beside \code{covering} or \code{hausdorff}, never
+#'       alone.}
+#'     \item{\code{mae_matched}, \code{rmse_matched}}{lower is better, in
+#'       observations. Mean absolute and root-mean-square location error over
+#'       the matched pairs only, so they describe how well the changepoints
+#'       that were found are placed and ignore the ones that were missed.
+#'       \code{NA} when nothing matched.}
+#'   }
+#' @seealso \code{\link{cpt_metrics_annotated}()} for scoring against
+#'   multiple annotators, and \code{\link{cpt_benchmark}()} to run a
+#'   method-by-dataset grid on these metrics.
 #' @export
 #'
 #' @examples
@@ -31,10 +93,10 @@
 #' cpt_metrics(c(101, 205), c(100, 200), n = 300, margin = 5)
 cpt_metrics <- function(pred, truth, n, margin = 5) {
 
+  pred <- as_cp_locations(pred, "pred", sort = TRUE)
+  truth <- as_cp_locations(truth, "truth", sort = TRUE)
   validate_scalar(n, "n", min = 1)
   validate_scalar(margin, "margin", min = 0)
-  pred <- sort(unique(as.integer(pred)))
-  truth <- sort(unique(as.integer(truth)))
   n <- as.integer(n)
 
   # Changepoints follow the "left" convention, so valid locations are
@@ -97,13 +159,79 @@ cpt_metrics <- function(pred, truth, n, margin = 5) {
 #' @param n Length of the series.
 #' @param margin Tolerance margin (default 5).
 #'
-#' @return A tibble with averaged metrics.
+#' @return A tibble with one row: \code{n}, \code{n_annotators},
+#'   \code{n_pred}, and the \strong{four} metrics this averages:
+#'   \code{precision}, \code{recall}, \code{f1} and \code{covering}.
+#'   Each is a plain unweighted mean of the per-annotator value from
+#'   \code{\link{cpt_metrics}()}, over all \code{n_annotators} of them.
+#'
+#'   \strong{This is a narrower table than \code{\link{cpt_metrics}()}
+#'   returns}, so a call moved from one to the other loses columns:
+#'   \code{n_truth} (there is no single truth), and the location metrics
+#'   \code{hausdorff}, \code{mae_matched}, \code{rmse_matched},
+#'   \code{rand_index} and \code{annotation_error}.
+#'
+#'   The three distance metrics are omitted for a reason worth stating,
+#'   because it is not obvious: they are \code{NA} whenever an annotator
+#'   shares no matched pair with the prediction, so averaging them would
+#'   quietly divide by fewer annotators than \code{n_annotators} reports.
+#'   Measured on three annotators against one prediction
+#'   (\code{list(c(100, 200), integer(0), 150)} at \eqn{n = 300}),
+#'   \code{mae_matched} was available for \strong{one} of the three and
+#'   \code{hausdorff} for two, while \code{f1} and \code{covering} were
+#'   finite for all three. Score those per annotator with
+#'   \code{\link{cpt_metrics}()} and combine them yourself if you want
+#'   them, so the divisor is yours to choose.
+#'
+#'   \code{covering} and \code{f1} are the pair the Turing Change Point
+#'   Dataset benchmark reports, which is why they are the ones averaged
+#'   here; \code{precision} and \code{recall} come along as F1's parts.
+#' @seealso \code{\link{cpt_metrics}()} for the full single-truth table
+#'   and what each column means.
 #' @export
+#' @examples
+#' # two annotators who disagree slightly about where the change is
+#' cpt_metrics_annotated(c(100, 200),
+#'                       annotations = list(c(98, 200), c(100, 203)),
+#'                       n = 300, margin = 5)
 cpt_metrics_annotated <- function(pred, annotations, n, margin = 5) {
 
+  # A `ggcpt` is a list, so it would be read as a set of annotators and its
+  # own fields scored one by one.
+  if (is_ggcpt(annotations)) {
+    stop("`annotations` takes changepoint indices, not a `ggcpt` object. ",
+         "Pass the locations instead, e.g. `fit$changepoints$cp` or ",
+         "`tidy(fit)$cp`.", call. = FALSE)
+  }
+  # A data frame IS a list, so `cpt_metrics_annotated(pred, tidy(fit), n)`
+  # read each COLUMN as an annotator -- scoring `cp_value`, which holds raw
+  # data values, as changepoint locations. It emitted "Dropping changepoint
+  # indices outside 1..(n-1)" and then produced plausible-looking numbers.
+  # cpt_metrics() refuses a data frame for either argument.
+  if (is.data.frame(annotations)) {
+    stop("`annotations` is a data frame, and a data frame is a list, so ",
+         "each COLUMN would be read as one annotator's changepoints. Pass ",
+         "a list of index vectors, one per annotator, e.g. ",
+         "`split(df$cp, df$annotator)` or `list(df$cp)`.", call. = FALSE)
+  }
+  # With no annotators there is nothing to average, and the arithmetic below
+  # does not notice: `do.call(rbind, list())` is NULL, `NULL$n_pred[1]` is
+  # NULL, tibble() drops a NULL argument, and the caller got a one-row
+  # tibble with the `n_pred` column MISSING, four NA metrics and four base-R
+  # warnings about a non-numeric argument to mean().
+  if (length(annotations) == 0L) {
+    stop("`annotations` is empty, so there is no ground truth to score ",
+         "against. Pass one vector of changepoint indices per annotator, ",
+         "e.g. `annotations = list(c(98, 200), c(100, 203))`.",
+         call. = FALSE)
+  }
   if (!is.list(annotations)) {
     annotations <- list(annotations)
   }
+  # Checked here as well as inside cpt_metrics(), so the message names the
+  # argument the caller actually passed rather than the loop variable.
+  annotations <- lapply(annotations, as_cp_locations, arg = "annotations",
+                        sort = TRUE)
 
   results <- lapply(annotations, function(truth) {
     cpt_metrics(pred, truth, n, margin)
@@ -136,10 +264,20 @@ cpt_metrics_annotated <- function(pred, annotations, n, margin = 5) {
 #'
 #' @return A ggplot object.
 #' @export
+#' @family plotting
+#' @examples
+#' set.seed(2026)
+#' x <- c(rnorm(100), rnorm(100, 5))
+#' fit <- cpt_detect(x, method = "pelt")
+#' ggcpt_eval(fit$changepoints$cp, truth = 100, data_vec = x)
 ggcpt_eval <- function(pred, truth, data_vec, margin = 5) {
 
-  pred <- sort(unique(as.integer(pred)))
-  truth <- sort(unique(as.integer(truth)))
+  # cpt_metrics() validates `margin` and this plot is meant to agree with
+  # it; a negative margin also draws its tolerance rectangles inside out
+  # (xmin > xmax).
+  validate_scalar(margin, "margin", min = 0)
+  pred <- as_cp_locations(pred, "pred", sort = TRUE)
+  truth <- as_cp_locations(truth, "truth", sort = TRUE)
 
   data_tbl <- tibble::tibble(
     index = seq_along(data_vec),
@@ -296,7 +434,7 @@ calc_adjusted_rand <- function(pred, truth, n) {
 
   # Identical partitions (including two trivial ones) have a degenerate
   # denominator; they agree perfectly. Any other case uses the ARI formula
-  # directly — index == expected is chance-level agreement (ARI 0), not 1.
+  # directly: index == expected is chance-level agreement (ARI 0), not 1.
   if (abs(max_index - expected) < 1e-15) return(1)
 
   (index - expected) / (max_index - expected)

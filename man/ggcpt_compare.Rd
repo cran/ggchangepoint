@@ -22,7 +22,12 @@ every seam. Use \code{\link{cpt_batch}()} for a panel of series.}
 \item{methods}{Character vector of method names (passed to \code{cpt_detect}).}
 
 \item{layout}{Layout type. \code{"facet"} (default) shows one panel per method;
-\code{"overlay"} draws all changepoints in one panel, colour-coded.}
+\code{"overlay"} draws all changepoints in one panel, colour-coded.
+The overlay \strong{dodges} the rules horizontally so that two methods
+agreeing on an index are both visible, which moves each rule by up to
+half an observation, so read positions off \code{"facet"}, or off
+\code{tidy()}, and treat the overlay as a picture of agreement rather
+than of location.}
 
 \item{change_in}{What to detect change in. Passed to each detector.}
 
@@ -30,7 +35,10 @@ every seam. Use \code{\link{cpt_batch}()} for a panel of series.}
 \code{future.apply::future_lapply()} as \code{future.seed}, and to
 \code{set.seed()} when running sequentially. Left \code{NULL} under a
 parallel plan, \code{future.seed = TRUE} is used, so the workers get
-parallel-safe streams but the run is not reproducible.}
+parallel-safe streams but the run is not reproducible. The seed is
+scoped to this call: \code{.Random.seed} is saved and restored, so a
+seeded call inside a simulation loop does not pin the loop's own
+stream.}
 
 \item{...}{Additional arguments passed to each detector.}
 }
@@ -42,6 +50,18 @@ Runs several detectors on the same data and returns a faceted or overlaid
 ggplot comparison. Respects \code{future::plan()} for parallel execution
 if the \code{future.apply} package is available.
 }
+\section{Positions, not a time index}{
+
+Unlike \code{\link{cpt_detect}()}, \code{\link{cpt_batch}()} and
+\code{\link{autoplot.ggcpt}()}, these two take no \code{index}: the
+input is reduced to a bare numeric vector, so a \code{ts}, \code{xts},
+\code{zoo} or \code{tsibble} is plotted (and tabulated) in observation
+positions with an "Index" axis. To compare detectors on dated data, run
+\code{cpt_detect(x, method = m, index = dates)} per method and read
+\code{tidy()}'s \code{cp_index}, or plot the results with
+\code{autoplot()}.
+}
+
 \examples{
 set.seed(2022)
 x <- c(rnorm(100, 0, 1), rnorm(100, 10, 1))

@@ -1,0 +1,650 @@
+# ---------------------------------------------------------------------------
+# Theme L: communication -- the last mile.
+#
+# "Changepoint at index 147" is not a finding. "Changepoint at 2020-03-11,
+# matching the WHO pandemic declaration" is. And the changepoints that match
+# nothing are where the interesting analysis starts, so the three-way output
+# (matched / unexplained / undetected) is the point of the function, not a
+# by-product of it.
+# ---------------------------------------------------------------------------
+
+#' Match detected changepoints to known events
+#'
+#' Joins a table of real-world events to a detection result and reports all
+#' three outcomes: changepoints an event explains, changepoints no event
+#' explains, and events no changepoint found. Matching reuses the same
+#' tolerance rule as \code{\link{cpt_metrics}()} and
+#' \code{\link{cpt_consensus}()}, so the package has one notion of "close
+#' enough" throughout.
+#'
+#' @param object A \code{ggcpt} object.
+#' @param events A data frame of events with a location column and a label
+#'   column. The location may be on the position scale or, when the result
+#'   carries a time index, on the index scale (dates, say); which one is
+#'   detected automatically from the column's type and reported. An event
+#'   whose location cannot be placed on the series (a missing value, text
+#'   that is not a number, or a date string against a \code{Date} index)
+#'   is left out of all three outcomes, with a warning that names it.
+#' @param location Name of the location column. Defaults to the first column
+#'   whose type matches the result's index (or the first numeric column).
+#' @param label Name of the label column. Defaults to the first character or
+#'   factor column.
+#' @param tolerance Matching window in positions. Defaults to \code{5}.
+#'
+#' @return A \code{ggcpt_events} object: a list with
+#'   \describe{
+#'     \item{\code{matched}}{one row per matched pair: \code{cp},
+#'       \code{event}, \code{event_value} (the event's own location, on
+#'       the index scale when it was given as one), \code{event_position}
+#'       (that location as a position in the series) and \code{distance}.}
+#'     \item{\code{unexplained}}{detected changepoints with no event
+#'       (\code{cp}).}
+#'     \item{\code{undetected}}{events with no changepoint
+#'       (\code{event}, \code{event_value}, \code{event_position}).}
+#'   }
+#'   \code{matched} and \code{unexplained} carry \code{cp_index}, the
+#'   changepoint on the original scale, when (and only when) the result
+#'   carries a time index, so \code{"cp_index" \%in\% names(x)} is the
+#'   test for it.
+#'
+#'   \code{tidy()} flattens those three slots into \strong{one} table with
+#'   a \code{status} column, and the row count is therefore the number of
+#'   changepoints \emph{plus} the number of events, not either one alone.
+#'   The three values are
+#'   \code{"matched"} (a pair: both \code{cp} and \code{event} filled,
+#'   with \code{distance}), \code{"unexplained_changepoint"} (a
+#'   changepoint with no event: \code{cp} filled, \code{event} and
+#'   \code{distance} \code{NA}) and \code{"undetected_event"} (an event
+#'   with no changepoint: \code{event} and \code{position} filled,
+#'   \code{cp} and \code{distance} \code{NA}).
+#'
+#'   \strong{Filter on \code{status}, not on \code{is.na(cp)}.} An
+#'   \code{"unexplained_changepoint"} row has a non-missing \code{cp}, so
+#'   \code{subset(tidy(x), !is.na(cp))} returns the matched pairs
+#'   \emph{and} the unexplained changepoints, which is the natural
+#'   mistake to make, and it silently overstates how many changepoints an
+#'   event explains.
+#'   With \code{print()}, \code{tidy()} and \code{autoplot()}.
+#' @seealso \code{\link{geom_cpt_event}()}, \code{\link{cpt_report}()}.
+#' @export
+#' @examples
+#' set.seed(2026)
+#' x <- c(rnorm(60), rnorm(60, 4))
+#' dates <- as.Date("2020-01-01") + 0:119
+#' fit <- cpt_detect(x, method = "pelt", index = dates)
+#' events <- data.frame(when = as.Date(c("2020-03-01", "2020-04-15")),
+#'                      what = c("policy change", "supply shock"))
+#' cpt_annotate_events(fit, events)
+cpt_annotate_events <- function(object, events, location = NULL,
+                                label = NULL, tolerance = 5) {
+  if (!is_ggcpt(object)) {
+    stop("`object` must be a ggcpt object.", call. = FALSE)
+  }
+  events <- as.data.frame(events)
+  if (nrow(events) == 0) {
+    stop("`events` has no rows.", call. = FALSE)
+  }
+  validate_scalar(tolerance, "tolerance", min = 0)
+
+  idx <- object$index
+  n <- nrow(object$data)
+
+  if (is.null(location)) {
+    location <- guess_event_column(events, idx)
+  }
+  if (!location %in% names(events)) {
+    stop("`location = \"", location, "\"` is not a column of `events` ",
+         "(columns: ", paste(names(events), collapse = ", "), ").",
+         call. = FALSE)
+  }
+  if (is.null(label)) {
+    cand <- names(events)[vapply(events, function(v) {
+      is.character(v) || is.factor(v)
+    }, logical(1))]
+    if (length(cand) == 0) {
+      events$.label <- paste0("event ", seq_len(nrow(events)))
+      label <- ".label"
+    } else {
+      label <- cand[1]
+    }
+  }
+
+  raw <- events[[location]]
+  # Two scales are possible: positions, or the result's own index. Deciding
+  # by class rather than by magnitude means a Date column is never read as a
+  # position, and a position column is never re-looked-up in a Date index.
+  on_index <- !is.null(idx) && identical(class(raw)[1], class(idx)[1]) &&
+    !is.numeric(idx)
+  if (!on_index && !is.null(idx) && is.numeric(idx) && is.numeric(raw) &&
+      (min(raw, na.rm = TRUE) < 1 || max(raw, na.rm = TRUE) > n)) {
+    # A numeric index whose events fall outside 1..n can only be on the
+    # index scale.
+    on_index <- TRUE
+  } else if (!on_index && !is.null(idx) && is.numeric(idx) &&
+             is.numeric(raw) && !identical(as.numeric(idx),
+                                           as.numeric(seq_len(n)))) {
+    # ...and one whose events fall INSIDE 1..n is ambiguous: the class test
+    # above cannot separate "row 40" from "the index value 40" when the
+    # index is itself numeric and overlaps the positions. The heuristic
+    # reads them as positions, which is the documented default, but it is a
+    # guess -- so say which reading was used rather than leaving the caller
+    # to infer it from the answer.
+    warning("`", location, "` is numeric and so is the result's index, and ",
+            "the values fall inside 1..", n, ", so they are read as ROW ",
+            "POSITIONS. If they are index values, look them up first, e.g. ",
+            "`events$", location, " <- match(events$", location,
+            ", fit$data$index_value)`.", call. = FALSE)
+  }
+  event_pos <- if (on_index && !is_numeric_like_index(idx)) {
+    # A character index is explicitly supported (see check_index_usable()),
+    # and a character events column matches it on class -- but the nearest-
+    # value lookup below is arithmetic. `as.numeric("Q1 2020")` is NA, so
+    # every position came back NA (with one unsuppressed "NAs introduced by
+    # coercion" warning per event), the events table was then emptied by the
+    # is.na() filter, and the function reported zero matched events, zero
+    # undetected events, and every changepoint unexplained. A label scale
+    # has no nearest -- it has an exact position or none.
+    m <- match(as.character(raw), as.character(idx))
+    as.integer(m)
+  } else if (on_index) {
+    vapply(raw, function(v) {
+      d <- abs(as.numeric(idx) - as.numeric(v))
+      if (all(is.na(d))) NA_integer_ else as.integer(which.min(d))
+    }, integer(1))
+  } else {
+    # suppressWarnings(): text that is not a number is reported below with
+    # the events it belongs to, not as base R's bare "NAs introduced by
+    # coercion".
+    as.integer(round(suppressWarnings(as.numeric(raw))))
+  }
+
+  ev <- tibble::tibble(
+    event = as.character(events[[label]]),
+    event_value = raw,
+    event_position = event_pos
+  )
+  # An event that cannot be placed used to vanish here without a word, so
+  # it was in none of the three outcomes this function exists to report:
+  # not matched, not undetected, simply gone. Measured on a Date-indexed
+  # fit given `when = c("2020-03-01", "2020-04-15")` as text, both events
+  # disappeared and the result read "0 events with no changepoint", with
+  # only base R's coercion warning to go on.
+  lost <- is.na(ev$event_position)
+  if (any(lost)) {
+    why <- if (all(is.na(raw[lost]))) {
+      "their location is missing"
+    } else if (!is.null(idx) && is.character(raw) && !is.character(idx)) {
+      paste0("`", location, "` is text while the result's index is a ",
+             class(idx)[1], "; convert it first, e.g. with as.Date()")
+    } else if (on_index) {
+      "their location matches no value of the result's index"
+    } else {
+      "their location is not a position in the series"
+    }
+    warning(sum(lost), " of ", nrow(ev), " event(s) could not be placed ",
+            "on the series and are left out of all three outcomes (",
+            paste(utils::head(ev$event[lost], 3), collapse = ", "),
+            if (sum(lost) > 3) ", ..." else "", "): ", why, ".",
+            call. = FALSE)
+  }
+  ev <- ev[!lost, , drop = FALSE]
+
+  cp <- object$changepoints$cp
+  # Match on event ROW, not on event position.
+  #
+  # match_changepoints() matches per element of `truth`, so two events at
+  # the same position are two separately-claimable slots and two
+  # changepoints could each take one -- correct. Recovering the row
+  # afterwards by value lookup (`which(ev$event_position == m$truth[i])[1]`)
+  # was not: both matched rows reported the FIRST event's label, and the
+  # second event never appeared. It did not appear in `undetected` either,
+  # because that excluded by position and the position was present, so
+  # `%in%` removed both rows. The second event was neither matched nor
+  # undetected: it vanished, from a function whose stated purpose is to
+  # report both.
+  #
+  # Measured before the fix: two events at one changepoint went in, one row
+  # came out, and only the first label was in it. Two events sharing a
+  # position is not exotic -- two announcements in one week of a weekly
+  # series, or any two that round to the same index in a monthly one.
+  ev_rows <- seq_len(nrow(ev))
+  m <- match_event_rows(cp, ev$event_position, tolerance)
+
+  # `cp_index` is present only when the result carries a time index --
+  # the same rule attach_index() uses for `$changepoints` and
+  # cpt_confint() for its bounds, so `"cp_index" %in% names(x)` is the
+  # test everywhere. It used to be added unconditionally and filled with a
+  # bare `NA`, which made the column a *logical* on an unindexed fit and a
+  # Date on an indexed one, and left a mystery all-NA column in the way.
+  with_index <- function(tbl, positions) {
+    if (is.null(idx)) return(tbl)
+    tbl$cp_index <- idx[positions]
+    tbl[, c("cp", "cp_index", setdiff(names(tbl), c("cp", "cp_index"))),
+        drop = FALSE]
+  }
+
+  matched <- if (nrow(m) > 0) {
+    rows <- lapply(seq_len(nrow(m)), function(i) {
+      j <- m$row[i]
+      tibble::tibble(cp = as.integer(m$pred[i]),
+                     event = ev$event[j],
+                     event_value = ev$event_value[j],
+                     event_position = as.integer(ev$event_position[j]),
+                     distance = as.integer(abs(m$pred[i] -
+                                               ev$event_position[j])))
+    })
+    with_index(do.call(rbind, rows), as.integer(m$pred))
+  } else {
+    with_index(
+      tibble::tibble(cp = integer(), event = character(),
+                     event_value = ev$event_value[0],
+                     event_position = integer(), distance = integer()),
+      integer(0))
+  }
+
+  unexplained_cp <- setdiff(cp, matched$cp)
+  unexplained <- with_index(
+    tibble::tibble(cp = as.integer(unexplained_cp)),
+    as.integer(unexplained_cp))
+  # By row identity, not by position: an event sharing a position with a
+  # matched one is still undetected if nothing claimed *it*.
+  undetected <- ev[setdiff(ev_rows, m$row), , drop = FALSE]
+
+  structure(
+    list(matched = matched, unexplained = unexplained,
+         undetected = undetected, object = object, tolerance = tolerance,
+         on_index = on_index),
+    class = "ggcpt_events"
+  )
+}
+
+# Internal: pick the events column holding the location. A column of the
+# same class as the result's index wins; otherwise the first numeric one.
+# Internal: match_changepoints() keyed to event ROW rather than to the
+# position value.
+#
+# Same greedy rule -- changepoints scanned in increasing order, each taking
+# the earliest unclaimed event within `tolerance` -- but it returns the row
+# index of the event claimed, so two events at one position stay
+# distinguishable. See the note in cpt_annotate_events() for what went
+# wrong without it.
+# Internal: can this index be subtracted? Date/POSIXct/difftime and any
+# numeric index answer "nearest" meaningfully; a character or factor index
+# does not, and as.numeric() on one is silently all-NA.
+#' @noRd
+is_numeric_like_index <- function(idx) {
+  is.numeric(idx) || inherits(idx, c("Date", "POSIXct", "POSIXlt", "difftime",
+                                     "yearmon", "yearqtr"))
+}
+
+#' @noRd
+match_event_rows <- function(pred, positions, tolerance) {
+  available <- rep(TRUE, length(positions))
+  out_pred <- integer(0)
+  out_row <- integer(0)
+  for (p in sort(pred)) {
+    cand <- which(available & abs(p - positions) <= tolerance)
+    if (length(cand) > 0) {
+      j <- cand[1]
+      out_pred <- c(out_pred, p)
+      out_row <- c(out_row, j)
+      available[j] <- FALSE
+    }
+  }
+  data.frame(pred = as.integer(out_pred), row = as.integer(out_row))
+}
+
+#' @noRd
+guess_event_column <- function(events, idx) {
+  if (!is.null(idx)) {
+    same <- names(events)[vapply(events, function(v) {
+      identical(class(v)[1], class(idx)[1])
+    }, logical(1))]
+    if (length(same) > 0) return(same[1])
+  }
+  num <- names(events)[vapply(events, is.numeric, logical(1))]
+  if (length(num) == 0) {
+    stop("Could not find a location column in `events`: none is numeric or ",
+         "matches the result's index type. Name it with `location =`.",
+         call. = FALSE)
+  }
+  num[1]
+}
+
+#' @rdname cpt_annotate_events
+#' @param x A \code{ggcpt_events} object.
+#' @param ... Ignored.
+#' @export
+print.ggcpt_events <- function(x, ...) {
+  cat("ggcpt_events (tolerance ", x$tolerance, " position(s))\n", sep = "")
+  cat("  Changepoints explained by an event: ", nrow(x$matched), "\n",
+      sep = "")
+  cat("  Changepoints with no event:         ", nrow(x$unexplained), "\n",
+      sep = "")
+  cat("  Events with no changepoint:         ", nrow(x$undetected), "\n",
+      sep = "")
+  if (nrow(x$matched) > 0) {
+    cat("\nMatched:\n")
+    print(x$matched, n = 10)
+  }
+  if (nrow(x$unexplained) > 0) {
+    cat("\nUnexplained changepoints (where the interesting analysis ",
+        "starts):\n", sep = "")
+    print(x$unexplained, n = 10)
+  }
+  if (nrow(x$undetected) > 0) {
+    cat("\nEvents the detector did not find:\n")
+    print(x$undetected[, c("event", "event_value", "event_position")], n = 10)
+  }
+  invisible(x)
+}
+
+#' @rdname cpt_annotate_events
+#' @export
+tidy.ggcpt_events <- function(x, ...) {
+  rows <- list()
+  if (nrow(x$matched) > 0) {
+    rows[[1]] <- tibble::tibble(status = "matched", cp = x$matched$cp,
+                                event = x$matched$event,
+                                position = x$matched$event_position,
+                                distance = x$matched$distance)
+  }
+  if (nrow(x$unexplained) > 0) {
+    rows[[2]] <- tibble::tibble(status = "unexplained_changepoint",
+                                cp = x$unexplained$cp,
+                                event = NA_character_,
+                                position = x$unexplained$cp,
+                                distance = NA_integer_)
+  }
+  if (nrow(x$undetected) > 0) {
+    rows[[3]] <- tibble::tibble(status = "undetected_event",
+                                cp = NA_integer_,
+                                event = x$undetected$event,
+                                position = x$undetected$event_position,
+                                distance = NA_integer_)
+  }
+  rows <- Filter(Negate(is.null), rows)
+  if (length(rows) == 0) {
+    return(tibble::tibble(status = character(), cp = integer(),
+                          event = character(), position = integer(),
+                          distance = integer()))
+  }
+  do.call(rbind, rows)
+}
+
+#' @rdname cpt_annotate_events
+#' @param object A \code{ggcpt_events} object (for \code{autoplot()}).
+#' @param repel Use \pkg{ggrepel} for the event labels? Defaults to
+#'   \code{TRUE} when it is installed.
+#' @export
+autoplot.ggcpt_events <- function(object, repel = NULL, ...) {
+  fit <- object$object
+  idx_vals <- plot_index(fit)
+  p <- autoplot.ggcpt(fit, ...)
+
+  ev <- rbind(
+    if (nrow(object$matched) > 0) {
+      tibble::tibble(pos = object$matched$event_position,
+                     label = object$matched$event, status = "matched")
+    },
+    if (nrow(object$undetected) > 0) {
+      tibble::tibble(pos = object$undetected$event_position,
+                     label = object$undetected$event,
+                     status = "undetected")
+    }
+  )
+  if (is.null(ev) || nrow(ev) == 0) return(p)
+  ev$x <- idx_vals[ev$pos]
+  ev$y <- min(fit$data$value, na.rm = TRUE)
+
+  has_ggrepel <- requireNamespace("ggrepel", quietly = TRUE)
+  if (is.null(repel)) repel <- has_ggrepel
+
+  p +
+    ggplot2::geom_vline(data = ev,
+                        ggplot2::aes(xintercept = x, linetype = status),
+                        colour = "grey30") +
+    # inherit.aes = FALSE: the event frame has its own columns, and the
+    # series plot maps `raw_value`, which is not one of them.
+    (if (isTRUE(repel) && has_ggrepel) {
+      ggrepel::geom_text_repel(data = ev,
+                               ggplot2::aes(x = x, y = y, label = label),
+                               inherit.aes = FALSE, size = 3,
+                               colour = "grey20", direction = "y",
+                               na.rm = TRUE)
+    } else {
+      ggplot2::geom_text(data = ev,
+                         ggplot2::aes(x = x, y = y, label = label),
+                         inherit.aes = FALSE, size = 3, colour = "grey20",
+                         angle = 90, hjust = 0, vjust = -0.4, na.rm = TRUE)
+    }) +
+    ggplot2::scale_linetype_manual(values = c(matched = "dotted",
+                                              undetected = "longdash"),
+                                   name = "Event") +
+    ggplot2::labs(subtitle = paste0(nrow(object$unexplained),
+                                    " changepoint(s) unexplained, ",
+                                    nrow(object$undetected),
+                                    " event(s) undetected"))
+}
+
+#' A reproducible report of a changepoint analysis
+#'
+#' Assembles everything a reader needs to judge a changepoint result into one
+#' artifact: the method and its citation, the penalty, the number and
+#' locations of the changepoints with intervals where available, the segment
+#' table, stability and diagnostics if they were computed, and the session
+#' information. Reproducibility and correct attribution in one call.
+#'
+#' @param object A \code{ggcpt} object.
+#' @param format \code{"md"} (default, GitHub-flavoured markdown as a
+#'   character vector), \code{"text"} (plain text) or \code{"gt"} (a
+#'   \pkg{gt} table of the changepoints, for a publication).
+#' @param file Optional path to write to. The report is returned invisibly
+#'   when a file is written. Ignored for \code{format = "gt"}, which returns
+#'   a table object rather than lines of text.
+#' @param stability Optional \code{\link{cpt_stability}()} result to include.
+#' @param events Optional \code{\link{cpt_annotate_events}()} result to
+#'   include.
+#' @param confint Include a \code{\link{cpt_confint}()} table? Defaults to
+#'   \code{TRUE}, which uses the engine's own intervals when it has them and
+#'   skips the section otherwise (rather than silently bootstrapping, which
+#'   would be slow and unexpected inside a report).
+#' @param session Include \code{sessionInfo()}? Defaults to \code{TRUE}.
+#'
+#' @return A character vector of report lines (or a \pkg{gt} table when
+#'   \code{format = "gt"}).
+#' @seealso \code{\link{cpt_gt}()}, \code{\link{cpt_cite}()}.
+#' @export
+#' @examples
+#' set.seed(2026)
+#' fit <- cpt_detect(c(rnorm(60), rnorm(60, 4)), method = "pelt")
+#' cat(cpt_report(fit, session = FALSE), sep = "\n")
+cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
+                       stability = NULL, events = NULL, confint = TRUE,
+                       session = TRUE) {
+  if (!is_ggcpt(object)) {
+    stop("`object` must be a ggcpt object.", call. = FALSE)
+  }
+  format <- match.arg(format)
+  validate_flag(confint, "confint")
+  validate_flag(session, "session")
+  # After the gt early return: `file` is documented as ignored for that
+  # format, so validating it there would refuse a call the help page says is
+  # fine.
+  if (format == "gt") return(cpt_gt(object))
+  validate_report_path(file)
+
+  h <- function(txt, lvl = 2) {
+    if (format == "md") paste0(strrep("#", lvl), " ", txt) else toupper(txt)
+  }
+  bullet <- function(txt) if (format == "md") paste0("- ", txt) else paste0("  ", txt)
+  fenced <- function(lines) {
+    if (format == "md") c("```", lines, "```") else lines
+  }
+
+  g <- glance.ggcpt(object)
+  out <- c(
+    h("Changepoint analysis report", 1),
+    "",
+    bullet(paste0("Method: `", object$method, "`",
+                  if (isTRUE(object$registered)) " (user-registered)" else "")),
+    bullet(paste0("Change in: ", object$change_in)),
+    bullet(paste0("Penalty: ", format_penalty(object$penalty))),
+    bullet(paste0("Series length: ", g$n)),
+    bullet(paste0("Changepoints found: ", g$n_changepoints)),
+    if (!is.null(object$index)) {
+      bullet(paste0("Index: ", format_index_range(object$index)))
+    },
+    if (is.finite(g$runtime)) {
+      bullet(paste0("Detection runtime: ", format(g$runtime, digits = 3),
+                    " s"))
+    },
+    ""
+  )
+
+  out <- c(out, h("Changepoints"), "",
+           fenced(utils::capture.output(print(object$changepoints,
+                                              n = 50))), "")
+
+  if (!is.null(object$regions)) {
+    out <- c(out, h("Significance regions"), "",
+             paste0("Each region contains at least one changepoint",
+                    if (!is.null(object$region_level)) {
+                      paste0(" at global level ",
+                             format(object$region_level))
+                    } else "", "."),
+             "",
+             fenced(utils::capture.output(print(cpt_regions(object),
+                                                n = 50))), "")
+  }
+
+  if (isTRUE(confint) &&
+      all(c("ci_lower", "ci_upper") %in% names(object$changepoints))) {
+    ci <- cpt_confint(object, method = "native")
+    out <- c(out, h("Location intervals"), "",
+             fenced(utils::capture.output(print(ci, n = 50))), "")
+  }
+
+  out <- c(out, h("Segments"), "",
+           fenced(utils::capture.output(print(object$segments, n = 50))), "")
+
+  if (!is.null(stability)) {
+    if (!inherits(stability, "ggcpt_stability")) {
+      stop("`stability` must be a cpt_stability() result.", call. = FALSE)
+    }
+    out <- c(out, h("Stability"), "",
+             fenced(utils::capture.output(print(stability))), "")
+  }
+  if (!is.null(events)) {
+    if (!inherits(events, "ggcpt_events")) {
+      stop("`events` must be a cpt_annotate_events() result.", call. = FALSE)
+    }
+    out <- c(out, h("Events"), "",
+             fenced(utils::capture.output(print(events))), "")
+  }
+
+  ref <- tryCatch(utils::capture.output(cpt_cite(object)),
+                  error = function(e) NULL)
+  if (!is.null(ref)) {
+    out <- c(out, h("Citation"), "", ref, "")
+  }
+  out <- c(out, h("Reproducibility"), "",
+           fenced(c("Call:", utils::capture.output(print(object$call)))), "")
+  if (isTRUE(session)) {
+    out <- c(out,
+             fenced(utils::capture.output(print(utils::sessionInfo()))), "")
+  }
+
+  # `c()` has already dropped the NULLs the conditional lines produce, so
+  # this only flattens.
+  out <- as.character(unlist(out))
+  if (!is.null(file)) {
+    writeLines(out, file)
+    return(invisible(out))
+  }
+  out
+}
+
+# Internal: check the `file` path before building the report, so a bad path
+# fails immediately rather than after all the work and in base R's words.
+# writeLines() answers a missing directory or a directory path with "cannot
+# open the connection", an NA with "'con' is not a connection", and a
+# two-element vector with "invalid 'description' argument" -- none of which
+# names the argument. `file = ""` is worse than any of them: writeLines()
+# sends the report to the console and no file appears, so the caller has a
+# report they believe they saved.
+#' @noRd
+validate_report_path <- function(file) {
+  if (is.null(file)) return(invisible(TRUE))
+  if (!is.character(file) || length(file) != 1L || is.na(file) ||
+      !nzchar(file)) {
+    stop("`file` must be a single non-empty file path, or NULL to return ",
+         "the report lines.", call. = FALSE)
+  }
+  if (dir.exists(file)) {
+    stop("`file` is a directory: ", file,
+         ". Give the path of a file inside it.", call. = FALSE)
+  }
+  parent <- dirname(file)
+  if (!dir.exists(parent)) {
+    stop("The directory for `file` does not exist: ", parent,
+         ". Create it first, e.g. dir.create(\"", parent,
+         "\", recursive = TRUE).", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+#' A publication-ready changepoint table
+#'
+#' Renders the changepoints of a result as a \pkg{gt} table, with the time
+#' index, location intervals and segment levels formatted for a paper. Falls
+#' back to a plain tibble, with a note, when \pkg{gt} is not installed.
+#'
+#' @param object A \code{ggcpt} object.
+#' @param title,subtitle Table title and subtitle. Sensible defaults are
+#'   derived from the result.
+#' @param digits Digits for the numeric columns. Defaults to \code{3}.
+#' @return A \pkg{gt} table, or a tibble when \pkg{gt} is unavailable.
+#' @seealso \code{\link{cpt_report}()}.
+#' @export
+#' @examplesIf requireNamespace("gt", quietly = TRUE)
+#' set.seed(2026)
+#' cpt_gt(cpt_detect(c(rnorm(60), rnorm(60, 4)), method = "pelt"))
+cpt_gt <- function(object, title = NULL, subtitle = NULL, digits = 3) {
+  if (!is_ggcpt(object)) {
+    stop("`object` must be a ggcpt object.", call. = FALSE)
+  }
+  validate_scalar(digits, "digits", min = 0)
+  cp <- object$changepoints
+  seg <- object$segments
+
+  tbl <- tibble::tibble(
+    `#` = seq_len(nrow(cp)),
+    Location = cp$cp
+  )
+  if ("cp_index" %in% names(cp)) tbl[["Time"]] <- cp$cp_index
+  if (all(c("ci_lower", "ci_upper") %in% names(cp))) {
+    tbl[["Interval"]] <- paste0("[", cp$ci_lower, ", ", cp$ci_upper, "]")
+  }
+  tbl[["Value at change"]] <- round(cp$cp_value, digits)
+  if (nrow(seg) == nrow(cp) + 1L) {
+    tbl[["Level before"]] <- round(seg$param_estimate[-nrow(seg)], digits)
+    tbl[["Level after"]] <- round(seg$param_estimate[-1], digits)
+    tbl[["Change"]] <- round(diff(seg$param_estimate), digits)
+  }
+
+  if (!requireNamespace("gt", quietly = TRUE)) {
+    message("Package 'gt' is not installed, so the plain tibble is returned. ",
+            "Install it with install.packages('gt') for a formatted table.")
+    return(tbl)
+  }
+  gt::tab_header(
+    gt::gt(tbl),
+    title = title %||% paste0("Changepoints (", object$method, ")"),
+    subtitle = subtitle %||% paste0(
+      nrow(cp), " changepoint(s) in ", object$change_in, " over ",
+      nrow(object$data), " observations; penalty ",
+      format_penalty(object$penalty)
+    )
+  )
+}

@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-optpart.R
 \name{fpop_wrapper}
 \alias{fpop_wrapper}
-\title{FPOP wrapper — Functional Pruning Optimal Partitioning}
+\title{FPOP wrapper: Functional Pruning Optimal Partitioning}
 \usage{
 fpop_wrapper(x, penalty = NULL, ...)
 }
@@ -29,3 +29,68 @@ A \code{ggcpt} object.
 Wraps the \code{fpop} package for optimal changepoint detection via
 functional pruning.
 }
+\details{
+\pkg{fpop} was archived from CRAN in 2026 at its maintainer's request and
+is still built on R-Forge, where it is developed. Install it with
+\code{install.packages("fpop", repos = "https://R-Forge.R-project.org")},
+or with \code{cpt_install_engines("core")}.
+}
+\examples{
+\dontshow{if (requireNamespace("fpop", quietly = TRUE)) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+set.seed(2026)
+x <- c(rnorm(60), rnorm(60, 4))
+fpop_wrapper(x)$changepoints
+# the default penalty assumes sd 1; scale it for wider noise
+y <- 5 * x
+fpop_wrapper(y, penalty = log(length(y)) * var(diff(y)))$changepoints
+\dontshow{\}) # examplesIf}
+}
+\references{
+\insertRef{maidstone2017optimal}{ggchangepoint}
+}
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

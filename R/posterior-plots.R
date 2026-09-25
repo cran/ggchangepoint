@@ -21,9 +21,22 @@ ggcpt_posterior <- function(x, prob_threshold = NULL) {
 
   prob <- posterior_prob_profile(x)
   if (is.null(prob)) {
+    # `cpt_methods()` reports posterior = TRUE for bocpd and mcp as well,
+    # because both are Bayesian and both quantify the location -- but
+    # neither exposes the per-location profile this function draws, so
+    # arriving here from that column used to be a dead end. Name the
+    # accessor that does work instead.
+    extra <- switch(
+      as.character(x$method),
+      bocpd = paste0(" A BOCPD result carries a posterior over run lengths",
+                     " rather than over locations: see ggcpt_runlength()."),
+      mcp = paste0(" An mcp result carries the posterior as",
+                   " `ci_lower`/`ci_upper` on the changepoints tibble and",
+                   " `fitted` on $data, not as a per-location profile."),
+      "")
     stop("No posterior probability profile found on this object. ",
          "ggcpt_posterior() supports results from bcp_wrapper() and ",
-         "beast_wrapper().", call. = FALSE)
+         "beast_wrapper().", extra, call. = FALSE)
   }
 
   if (is.null(prob_threshold)) {
@@ -35,9 +48,13 @@ ggcpt_posterior <- function(x, prob_threshold = NULL) {
   }
 
   n <- nrow(x$data)
-  top <- tibble::tibble(index = x$data$index, y = x$data$value,
+  # On the result's own time index, like autoplot(fit) and every other
+  # plot drawn against series position: a dated bcp fit was drawn here in
+  # positions 1..n.
+  idx_vals <- plot_index(x)
+  top <- tibble::tibble(index = idx_vals, y = x$data$value,
                         panel = "Series and posterior mean")
-  bottom <- tibble::tibble(index = seq_len(n), y = prob,
+  bottom <- tibble::tibble(index = idx_vals, y = prob,
                            panel = "Posterior changepoint probability")
   both <- rbind(top, bottom)
   both$panel <- factor(both$panel, levels = unique(both$panel))
@@ -48,12 +65,12 @@ ggcpt_posterior <- function(x, prob_threshold = NULL) {
     ggplot2::geom_col(data = both[both$panel == levels(both$panel)[2], ],
                       fill = "steelblue", width = 1) +
     ggplot2::facet_grid(panel ~ ., scales = "free_y", switch = "y") +
-    ggplot2::labs(x = "Index", y = NULL,
+    ggplot2::labs(x = plot_index_label(x), y = NULL,
                   title = paste0("Bayesian changepoint posterior (",
                                  x$method, ")"))
 
   if ("fitted" %in% names(x$data)) {
-    fit_df <- tibble::tibble(index = x$data$index, y = x$data$fitted,
+    fit_df <- tibble::tibble(index = idx_vals, y = x$data$fitted,
                              panel = levels(both$panel)[1])
     p <- p + ggplot2::geom_line(data = fit_df, color = "darkred",
                                 linewidth = 0.8)
@@ -122,12 +139,23 @@ ggcpt_runlength <- function(x, prob_floor = 1e-3) {
 
   R <- as.matrix(R)
   # ocp stores one time point per COLUMN (each column is a probability
-  # distribution over run lengths, the rows).
+  # distribution over run lengths, the rows), and the FIRST column is the
+  # prior, before any observation: all its mass sits at run length 0, and
+  # `R` has n + 1 columns for n observations. So column t is the posterior
+  # after observation t - 1. Plotting column t at x = t drew the whole
+  # heatmap one position late: on a change after observation 60 the run
+  # length fell to 1 at x = 62 rather than at 61, the first observation of
+  # the new segment. The prior column is dropped, since it describes no
+  # observation.
+  n <- nrow(x$data)
+  shift <- max(0L, ncol(R) - n)
   df <- do.call(rbind, lapply(seq_len(ncol(R)), function(t) {
+    obs <- t - shift
+    if (obs < 1L || obs > n) return(NULL)
     probs <- R[, t]
     keep <- which(is.finite(probs) & probs > prob_floor)
     if (length(keep) == 0) return(NULL)
-    data.frame(time = t, run_length = keep - 1L, prob = probs[keep])
+    data.frame(time = obs, run_length = keep - 1L, prob = probs[keep])
   }))
 
   if (is.null(df)) {
@@ -135,38 +163,68 @@ ggcpt_runlength <- function(x, prob_floor = 1e-3) {
          "; lower it (probabilities are at most 1).", call. = FALSE)
   }
 
+  # The time axis on the result's own index, as for ggcpt_posterior().
+  idx_vals <- plot_index(x)
+  df$time <- idx_vals[df$time]
   ggplot2::ggplot(df, ggplot2::aes(time, run_length, fill = prob)) +
     ggplot2::geom_raster() +
     ggplot2::scale_fill_gradient(low = "grey95", high = "darkblue",
                                  name = "Posterior") +
-    ggplot2::labs(x = "Index", y = "Run length",
+    ggplot2::labs(x = plot_index_label(x), y = "Run length",
                   title = "BOCPD run-length posterior") +
-    ggplot2::geom_vline(xintercept = x$changepoints$cp, color = "red",
-                        linetype = "dashed", linewidth = 0.4)
+    ggplot2::geom_vline(xintercept = idx_vals[x$changepoints$cp],
+                        color = "red", linetype = "dashed", linewidth = 0.4)
 }
 
 #' Interactive changepoint plot
 #'
 #' Renders a \code{ggcpt} result (or any ggplot built from one) as an
-#' interactive HTML widget via \pkg{plotly}, with values on hover. A thin
-#' convenience wrapper: the static \code{autoplot()} path is untouched.
+#' interactive HTML widget, with values on hover. A thin convenience
+#' wrapper: the static \code{autoplot()} path is untouched.
 #'
 #' @param x A \code{ggcpt} object or a ggplot object.
+#' @param engine Which renderer: \code{"plotly"} (the default) rebuilds the
+#'   plot in plotly's own model, which is richer but loses layers plotly
+#'   does not know; \code{"ggiraph"} renders the ggplot itself to
+#'   interactive SVG, so faceting and every layer survive and the result
+#'   composes with other htmlwidgets. Neither is a dependency; whichever you
+#'   ask for must be installed.
+#' @param width_svg,height_svg Figure size in inches for
+#'   \code{engine = "ggiraph"}.
 #' @param ... Additional arguments passed to \code{autoplot()} when \code{x}
 #'   is a \code{ggcpt} object.
-#' @return A \code{plotly} htmlwidget.
+#' @return A \pkg{plotly} or \pkg{ggiraph} htmlwidget.
 #' @export
 #' @examplesIf requireNamespace("plotly", quietly = TRUE) && interactive()
 #' res <- cpt_detect(c(rnorm(50), rnorm(50, 5)), method = "pelt")
 #' ggcpt_interactive(res)
-ggcpt_interactive <- function(x, ...) {
-  if (!requireNamespace("plotly", quietly = TRUE)) {
-    stop("Package 'plotly' is required. ",
-         "Install it with install.packages('plotly').", call. = FALSE)
+#' @family plotting
+ggcpt_interactive <- function(x, engine = c("plotly", "ggiraph"),
+                              width_svg = 8, height_svg = 5, ...) {
+  engine <- match.arg(engine)
+  if (!requireNamespace(engine, quietly = TRUE)) {
+    stop("Package '", engine, "' is required for ",
+         "`engine = \"", engine, "\"`. Install it with ",
+         "install.packages('", engine, "').", call. = FALSE)
   }
-  p <- if (is_ggcpt(x)) autoplot.ggcpt(x, ...) else x
+  # Dispatch, don't hard-code: `ggcpt_consensus` inherits `ggcpt` (so
+  # is_ggcpt() is TRUE) and registers its own autoplot method, so calling
+  # autoplot.ggcpt() directly rendered the plain series plot for it and sent
+  # `plot_type = "agreement"` through `...` to a method that has no such
+  # argument.
+  p <- if (is_ggcpt(x)) ggplot2::autoplot(x, ...) else x
   if (!inherits(p, "ggplot")) {
     stop("`x` must be a ggcpt object or a ggplot.", call. = FALSE)
   }
-  plotly::ggplotly(p)
+  if (engine == "plotly") {
+    return(plotly::ggplotly(p))
+  }
+  # Checked on the ggiraph path only, because that is the only path that uses
+  # them (the plotly branch above ignores both, as documented). Without this,
+  # girafe() answers "`width` must be a scalar positive number" -- naming its
+  # own internal argument rather than the `width_svg` the caller passed.
+  validate_scalar(width_svg, "width_svg", min = 0, min_open = TRUE)
+  validate_scalar(height_svg, "height_svg", min = 0, min_open = TRUE)
+  ggiraph::girafe(ggobj = p, width_svg = width_svg,
+                  height_svg = height_svg)
 }

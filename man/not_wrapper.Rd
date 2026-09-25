@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-search.R
 \name{not_wrapper}
 \alias{not_wrapper}
-\title{NOT wrapper — Narrowest-Over-Threshold}
+\title{NOT wrapper: Narrowest-Over-Threshold}
 \usage{
 not_wrapper(x, contrast = "pcwsConstMean", seed = NULL, ...)
 }
@@ -13,7 +13,9 @@ not_wrapper(x, contrast = "pcwsConstMean", seed = NULL, ...)
 \code{"pcwsLinContMean"}, \code{"pcwsLinMean"},
 \code{"pcwsConstMeanVar"}. Defaults to \code{"pcwsConstMean"}.}
 
-\item{seed}{Optional seed for reproducibility.}
+\item{seed}{Optional seed for reproducibility. The seed is scoped to this
+call: \code{.Random.seed} is saved and restored, so a seeded call
+inside a simulation loop does not pin the loop's own stream.}
 
 \item{...}{Additional arguments passed to \code{not::not()}.}
 }
@@ -27,3 +29,61 @@ Narrowest-Over-Threshold method. The contrast determines what change is
 detected: piecewise-constant mean (default), mean and variance, or
 (continuous or discontinuous) piecewise-linear trend.
 }
+\examples{
+\dontshow{if (requireNamespace("not", quietly = TRUE)) (if (getRversion() >= "3.4") withAutoprint else force)(\{ # examplesIf}
+set.seed(2026)
+not_wrapper(c(rnorm(60), rnorm(60, 4)))$changepoints
+# a change in slope, not in level: pick the contrast to match
+trend <- c(1:60, 60 - 1:60) / 10 + rnorm(120)
+not_wrapper(trend, contrast = "pcwsLinContMean")$changepoints
+\dontshow{\}) # examplesIf}
+}
+\references{
+\insertRef{baranowski2019narrowest}{ggchangepoint}
+}
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

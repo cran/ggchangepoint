@@ -14,6 +14,14 @@
 #'
 #' @return A ggplot layer.
 #' @export
+#' @family ggplot2 layers
+#' @examples
+#' library(ggplot2)
+#' set.seed(2026)
+#' d <- data.frame(t = 1:100, y = c(rnorm(50), rnorm(50, 4)))
+#' cp <- data.frame(cp = cpt_detect(d$y, method = "pelt")$changepoints$cp)
+#' ggplot(d, aes(t, y)) + geom_line() +
+#'   geom_changepoint(aes(xintercept = cp), data = cp, colour = "blue")
 geom_changepoint <- function(mapping = NULL, data = NULL, ...,
                              na.rm = FALSE, show.legend = NA) {
   ggplot2::geom_vline(
@@ -39,6 +47,15 @@ geom_changepoint <- function(mapping = NULL, data = NULL, ...,
 #'
 #' @return A ggplot layer.
 #' @export
+#' @family ggplot2 layers
+#' @examples
+#' library(ggplot2)
+#' set.seed(2026)
+#' fit <- cpt_detect(c(rnorm(50), rnorm(50, 4)), method = "pelt")
+#' ggplot(fit$data, aes(index, value)) + geom_line(colour = "grey70") +
+#'   geom_cpt_segment(aes(x = start, xend = end, y = param_estimate,
+#'                        yend = param_estimate),
+#'                    data = fit$segments, colour = "blue", linewidth = 1)
 geom_cpt_segment <- function(mapping = NULL, data = NULL, ...,
                              na.rm = FALSE, show.legend = NA) {
   ggplot2::geom_segment(
@@ -62,12 +79,22 @@ geom_cpt_segment <- function(mapping = NULL, data = NULL, ...,
 #'   and the changepoint itself is usually marked with a separate point layer,
 #'   as \code{autoplot(show_ci = TRUE)} does.
 #' @param data A data frame with CI information.
-#' @param ... Other arguments passed to \code{geom_errorbarh}.
+#' @param ... Other arguments passed to \code{geom_errorbar} (with
+#'   \code{orientation = "y"}; \code{geom_errorbarh()} is deprecated).
 #' @param na.rm If \code{FALSE}, missing values are removed.
 #' @param show.legend Whether to show legend.
 #'
 #' @return A ggplot layer.
 #' @export
+#' @family ggplot2 layers
+#' @examples
+#' library(ggplot2)
+#' set.seed(2026)
+#' d <- data.frame(t = 1:100, y = c(rnorm(50), rnorm(50, 4)))
+#' ci <- data.frame(xmin = 45, xmax = 56, y = 0)
+#' ggplot(d, aes(t, y)) + geom_line() +
+#'   geom_cpt_ci(aes(xmin = xmin, xmax = xmax, y = y), data = ci,
+#'               inherit.aes = FALSE, width = 0.4, colour = "blue")
 geom_cpt_ci <- function(mapping = NULL, data = NULL, ...,
                         na.rm = FALSE, show.legend = NA) {
   # geom_errorbarh() is deprecated since ggplot2 3.5.0; geom_errorbar()
@@ -92,10 +119,13 @@ geom_cpt_ci <- function(mapping = NULL, data = NULL, ...,
 #' @param mapping Aesthetic mappings.
 #' @param data A data frame.
 #' @param geom The geometric object to use (default: \code{"vline"}). The stat
-#'   computes a single \code{xintercept} per changepoint, so only geoms that
-#'   consume that aesthetic fit — \code{"vline"} and \code{"rug"}. A geom
-#'   needing \code{x}/\code{y}, such as \code{"point"}, errors because the
-#'   stat drops those aesthetics.
+#'   computes a single \code{xintercept} per changepoint and drops
+#'   \code{x}/\code{y}, so \code{"vline"} is the geom that fits. A geom
+#'   needing \code{x}/\code{y} (\code{"point"}, and \code{"rug"}, which
+#'   consumes \code{x}/\code{y} rather than \code{xintercept}) errors for
+#'   that reason. \code{inherit.aes} is fixed at \code{TRUE} here: the stat
+#'   re-detects on the plot's own data, so the panel's \code{x}/\code{y}
+#'   mapping is what it reads.
 #' @param position Position adjustment.
 #' @param ... Other arguments passed to the geom.
 #' @param method Detection method (passed to \code{cpt_detect}).
@@ -105,6 +135,13 @@ geom_cpt_ci <- function(mapping = NULL, data = NULL, ...,
 #'
 #' @return A ggplot layer.
 #' @export
+#' @family ggplot2 layers
+#' @examples
+#' library(ggplot2)
+#' set.seed(2026)
+#' d <- data.frame(t = 1:100, y = c(rnorm(50), rnorm(50, 4)))
+#' ggplot(d, aes(t, y)) + geom_line() +
+#'   stat_changepoint(method = "pelt", colour = "blue")
 stat_changepoint <- function(mapping = NULL, data = NULL,
                              geom = "vline", position = "identity",
                              ...,

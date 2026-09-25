@@ -2,7 +2,7 @@
 % Please edit documentation in R/wrap-regression.R
 \name{envcpt_wrapper}
 \alias{envcpt_wrapper}
-\title{EnvCpt wrapper — changepoints versus trends versus autocorrelation}
+\title{EnvCpt wrapper: changepoints versus trends versus autocorrelation}
 \usage{
 envcpt_wrapper(
   x,
@@ -30,14 +30,16 @@ envcpt_wrapper(
 A \code{ggcpt} object. \code{$fit} holds the full \code{envcpt}
   output; the selected model name is stored in the penalty descriptor and
   printed by \code{glance()} via \code{penalty_type}. Individual model
-  fits that fail are expected — the criterion ignores them — so the
+  fits that fail are expected (the criterion ignores them), so the
   engine's own \code{try()} output is not passed on; genuine warnings
   still are, and a series on which no model fits at all raises an error.
+  A constant series has no changepoints and is not handed to the engine,
+  so \code{$fit} is \code{NULL} there.
 }
 \description{
 Wraps \code{EnvCpt::envcpt()} (Beaulieu and Killick, 2018), which fits up
-to twelve competing models — constant mean or linear trend, each with or
-without changepoints, and with white-noise, AR(1) or AR(2) errors — and
+to twelve competing models (constant mean or linear trend, each with or
+without changepoints, and with white-noise, AR(1) or AR(2) errors) and
 lets an information criterion decide whether the series really contains
 changepoints or merely trend/autocorrelation ("memory"). The changepoints
 of the winning model (if any) are returned, and the winning model's name
@@ -54,3 +56,49 @@ res$changepoints
 \references{
 \insertRef{beaulieu2018envcpt}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

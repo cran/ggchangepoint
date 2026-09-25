@@ -18,7 +18,9 @@ default is 2. This argument is only applied when \code{algorithm =
 "divisive"}.}
 
 \item{seed}{Optional. A seed for reproducibility of the stochastic
-permutation test.}
+permutation test. The seed is scoped to this call: \code{.Random.seed}
+is saved and restored, so a seeded call inside a simulation loop does
+not pin the loop's own stream.}
 
 \item{...}{Extra arguments to pass on either from \code{e.divisive()} or
 \code{e.agglo()}.}
@@ -28,8 +30,8 @@ A tibble includes which point(s) is/are the changepoint along with
   raw changepoint value corresponding to that changepoint. Changepoint
   locations follow the \code{ecp} package convention: the first index of the
   right segment. When no changepoint is found, an empty tibble is returned
-  (0 rows). The upstream fit is not retained — and \code{$fit} is
-  \code{NULL} on a \code{ggcpt} from \code{cpt_detect(method = "ecp")} —
+  (0 rows). The upstream fit is not retained (\code{$fit} is
+  \code{NULL} on a \code{ggcpt} from \code{cpt_detect(method = "ecp")}),
   because \code{ecp::e.agglo()}'s cluster-progression matrix is quadratic
   in the series length; call the \pkg{ecp} functions directly if you need
   their full output.
@@ -51,3 +53,49 @@ ecp_wrapper(c(rnorm(100,0,1),rnorm(100,10,1)))
 \references{
 \insertRef{james2014ecp}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpm_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}

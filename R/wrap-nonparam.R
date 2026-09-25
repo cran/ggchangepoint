@@ -15,13 +15,17 @@
 #'   \code{"Kolmogorov-Smirnov"}, \code{"Cramer-von-Mises"}. Parametric:
 #'   \code{"Student"}, \code{"Bartlett"}, \code{"GLR"} (Gaussian),
 #'   \code{"Exponential"} (positive data), \code{"FET"} (Fisher's exact test,
-#'   for 0/1 Bernoulli data — this one also needs a \code{lambda} value passed
+#'   for 0/1 Bernoulli data; this one also needs a \code{lambda} value passed
 #'   through \code{...}, e.g. \code{lambda = 0.3}).
 #' @param arl0 Target in-control average run length (how many observations,
 #'   on average, before a false alarm). Defaults to \code{500}. \pkg{cpm}
-#'   ships thresholds only for 100, 200, 370, 400, 500, 600, 700, 1000, 2000,
-#'   5000, 10000 and 20000; any other value is refused, because the engine
-#'   answers it by printing an error and reporting no changepoints.
+#'   ships thresholds only for a fixed grid (100, 200, 300, 370, 400, 500,
+#'   600, 700, 800, 900, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000,
+#'   9000, 10000, 20000, 30000, 40000 and 50000), and any other value is
+#'   refused, because the engine answers it by printing an error and
+#'   reporting no changepoints. The grid is the same for every
+#'   \code{cpm_type}, and 50000 is the ceiling: a long series cannot be
+#'   given an \code{arl0} proportional to its length indefinitely.
 #' @param startup Number of observations after each restart before monitoring
 #'   begins. Defaults to \code{20}.
 #' @param ... Additional arguments passed to \code{cpm::processStream()}.
@@ -34,19 +38,24 @@
 #' @examplesIf requireNamespace("cpm", quietly = TRUE)
 #' res <- cpm_wrapper(c(rnorm(100), rnorm(100, 3)))
 #' res$changepoints
+#' @family changepoint engines
 cpm_wrapper <- function(x, cpm_type = "Mann-Whitney", arl0 = 500,
                         startup = 20, ...) {
   need_pkg("cpm")
+  reject_renamed_args(list(...), "cpm")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  # No `min` here on purpose: the printed-error guard further down names
+  # the average run lengths cpm actually ships thresholds for, which is
+  # far more useful than a range complaint. This catches only what that
+  # guard cannot see -- NA, a string, a length-2 vector.
+  validate_scalar(arl0, "arl0")
+  validate_scalar(startup, "startup", min = 1)
 
-  # "GLRAdjusted"/"ExponentialAdjusted" are documented by cpm but rejected by
-  # its own processStream() dispatch (it prints "not a valid
-  # ChangePointModel type" and returns no changepoints instead of erroring),
-  # so they are not offered here: a silent empty result is worse than a
-  # refusal.
-  cpm_type <- match.arg(cpm_type, c(
-    "Mann-Whitney", "Mood", "Lepage", "Kolmogorov-Smirnov",
-    "Cramer-von-Mises", "Student", "Bartlett", "GLR", "Exponential", "FET"
-  ))
+  cpm_type <- cpm_check_type(cpm_type, list(...))
 
   validate_data(x)
   data_vec <- as_uni_vector(x, "cpm")
@@ -63,13 +72,7 @@ cpm_wrapper <- function(x, cpm_type = "Mann-Whitney", arl0 = 500,
     fit <- cpm::processStream(data_vec, cpmType = cpm_type, ARL0 = arl0,
                               startup = startup, ...)
   )
-  if (any(grepl("No thresholds available", cpm_out, fixed = TRUE))) {
-    stop("`arl0 = ", arl0, "` is not an average run length that cpm ships ",
-         "thresholds for; it returns no changepoints rather than failing, ",
-         "which is indistinguishable from a genuine \"no changes\" result. ",
-         "Supported values are 100, 200, 370, 400, 500, 600, 700, 1000, ",
-         "2000, 5000, 10000 and 20000.", call. = FALSE)
-  }
+  cpm_check_printed_error(cpm_out, arl0, list(...))
   # anything else the engine printed is still the user's to see
   if (length(cpm_out)) cat(cpm_out, sep = "\n")
 
@@ -86,6 +89,74 @@ cpm_wrapper <- function(x, cpm_type = "Mann-Whitney", arl0 = 500,
       list(detection_time = as.integer(fit$detectionTimes))
     }
   )
+}
+
+# Internal: the cpm argument guards, in one place because there are two
+# doors into the engine. cpm reports a bad `cpmType`, a missing FET `lambda`
+# or an unsupported `ARL0` by *printing* an error and handing back something
+# unusable rather than raising a condition, so each caller has to look for
+# it -- and `cpt_monitor(method = "cpm")` built its model straight from
+# cpm::makeChangePointModel() and so inherited none of these. Measured
+# against cpm 2.3: a withheld type surfaced there as `no applicable method
+# for '@' applied to an object of class "NULL"`, a missing lambda as base R's
+# `only 0's may be mixed with negative subscripts`, and an off-grid arl0 as
+# the same `@`-on-NULL message. None of the three named the argument.
+#
+# "GLRAdjusted" is documented by cpm but rejected by its own dispatch (it
+# prints "not a valid ChangePointModel type" and returns no changepoints
+# instead of erroring), so it is not offered here: a silent empty result is
+# worse than a refusal. Note that "ExponentialAdjusted" -- named alongside it
+# in an earlier version of this comment -- is NOT rejected: it runs and
+# returns changepoints, so the pair is not interchangeable and only the one
+# type is withheld.
+#' @noRd
+cpm_types <- function() {
+  c("Mann-Whitney", "Mood", "Lepage", "Kolmogorov-Smirnov",
+    "Cramer-von-Mises", "Student", "Bartlett", "GLR", "Exponential", "FET")
+}
+
+# Internal: validate `cpm_type` and the `lambda` that one of its values
+# requires. FET is the one type that needs `lambda`, and without it cpm dies
+# with base R's "only 0's may be mixed with negative subscripts" -- a message
+# about neither the argument nor the method. cpm ships FET thresholds for
+# lambda = 0.1 and 0.3 only (measured across 0.01-1.0 against cpm 2.3); every
+# other value takes the printed-error path in cpm_check_printed_error().
+#' @noRd
+cpm_check_type <- function(cpm_type, dots) {
+  cpm_type <- match.arg(cpm_type, cpm_types())
+  if (identical(cpm_type, "FET") && !"lambda" %in% names(dots)) {
+    stop("`cpm_type = \"FET\"` needs a `lambda` value passed through `...`; ",
+         "cpm has no default for it and fails with an unrelated subscript ",
+         "error when it is missing. Supported values are `lambda = 0.1` and ",
+         "`lambda = 0.3`.", call. = FALSE)
+  }
+  cpm_type
+}
+
+# Internal: turn cpm's *printed* threshold complaint into a real error. The
+# same printed line covers two different arguments, and it names which:
+# "selected ARL0" or "selected lambda". Blaming arl0 for a lambda cpm has no
+# thresholds for sent the reader after an argument that was already correct,
+# so the branch follows the printed text.
+#' @noRd
+cpm_check_printed_error <- function(cpm_out, arl0, dots) {
+  if (!any(grepl("No thresholds available", cpm_out, fixed = TRUE))) {
+    return(invisible(NULL))
+  }
+  if (any(grepl("selected lambda", cpm_out, fixed = TRUE))) {
+    lam <- dots[["lambda"]]
+    stop("`lambda = ", if (is.null(lam)) "<unset>" else lam, "` is not a ",
+         "value cpm ships FET thresholds for; it returns no changepoints ",
+         "rather than failing, which is indistinguishable from a genuine ",
+         "\"no changes\" result. Supported values are 0.1 and 0.3.",
+         call. = FALSE)
+  }
+  stop("`arl0 = ", arl0, "` is not an average run length that cpm ships ",
+       "thresholds for; it returns no changepoints rather than failing, ",
+       "which is indistinguishable from a genuine \"no changes\" result. ",
+       "Supported values are 100, 200, 300, 370, 400, 500, 600, 700, ",
+       "800, 900, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, ",
+       "10000, 20000, 30000, 40000 and 50000.", call. = FALSE)
 }
 
 #' Kernel changepoint wrapper (KCP on running statistics)
@@ -114,6 +185,9 @@ cpm_wrapper <- function(x, cpm_type = "Mann-Whitney", arl0 = 500,
 #' @param alpha Significance level of the permutation test. Defaults to
 #'   \code{0.05}.
 #' @param seed Optional seed for reproducibility of the permutation test.
+#'   The seed is scoped to this call: \code{.Random.seed} is saved and
+#'   restored, so a seeded call inside a simulation loop does not pin the
+#'   loop's own stream.
 #' @param ... Additional arguments passed to \code{kcpRS::kcpRS()}.
 #' @return A \code{ggcpt} object. Reported locations refer to the centre of
 #'   the sliding window in which the change occurs. The series must be at
@@ -128,10 +202,19 @@ cpm_wrapper <- function(x, cpm_type = "Mann-Whitney", arl0 = 500,
 #' @examplesIf requireNamespace("kcpRS", quietly = TRUE)
 #' res <- kcp_wrapper(c(rnorm(60), rnorm(60, 3)), nperm = 100, seed = 2026)
 #' res$changepoints
+#' @family changepoint engines
 kcp_wrapper <- function(x, running_stat = c("mean", "var", "autocorr", "corr"),
                         wsize = 25, nperm = 1000, kmax = 10, alpha = 0.05,
                         seed = NULL, ...) {
   need_pkg("kcpRS")
+  reject_renamed_args(list(...), "kcp")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(wsize, "wsize", min = 2)
+  validate_scalar(kmax, "kmax", min = 1)
   running_stat <- match.arg(running_stat)
   validate_scalar(alpha, "alpha", min = 0, max = 1, min_open = TRUE,
                   max_open = TRUE)
@@ -182,11 +265,36 @@ kcp_wrapper <- function(x, running_stat = c("mean", "var", "autocorr", "corr"),
     corr     = kcpRS::runCorr
   )
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
-  fit <- kcpRS::kcpRS(data = as.data.frame(X_fit), RS_fun = rs_fun,
-                      RS_name = running_stat, wsize = wsize, nperm = nperm,
-                      Kmax = kmax, alpha = alpha, ...)
+  # kcpRS::kcpRS() opens a PSOCK cluster unconditionally --
+  # `kcpRS.default()` runs `makeCluster(ncpu)` whenever
+  # `ncpu <= detectCores()`, so no value of `ncpu`, not even 1, avoids it --
+  # and `base::serverSocket()` fails outright when the port it picked is
+  # taken. Two `R CMD build` runs on the same machine collided on port
+  # 11246 and one of them died mid-vignette with "creation of server socket
+  # failed", which is the shape of failure CRAN's parallel package checks
+  # produce. The port is chosen inside makeCluster(), so a retry gets a
+  # different one; three attempts, and only for that error, so a genuine
+  # engine failure is still raised on the first try.
+  attempt <- 1L
+  repeat {
+    fit <- tryCatch(
+      with_foreach_restored(
+        kcpRS::kcpRS(data = as.data.frame(X_fit), RS_fun = rs_fun,
+                     RS_name = running_stat, wsize = wsize, nperm = nperm,
+                     Kmax = kmax, alpha = alpha, ...)),
+      error = function(e) {
+        if (attempt < 3L &&
+            grepl("server socket|cannot be opened|port",
+                  conditionMessage(e))) {
+          return(NULL)
+        }
+        stop(e)
+      })
+    if (!is.null(fit)) break
+    attempt <- attempt + 1L
+  }
 
   # kcpRS reports the first index of the new phase (right convention);
   # normalise to the package's left convention.
@@ -211,8 +319,8 @@ kcp_wrapper <- function(x, running_stat = c("mean", "var", "autocorr", "corr"),
 #'
 #' @param x A numeric vector or matrix (rows are time points).
 #' @param G Moving-window bandwidth. Defaults to \code{max(20, 0.1 * n)}
-#'   observations, capped at \code{n / 2} — the largest bandwidth the engine
-#'   accepts — so the default also works on series shorter than 40.
+#'   observations, capped at \code{n / 2} (the largest bandwidth the engine
+#'   accepts), so the default also works on series shorter than 40.
 #' @param lag Time lag at which changes in the joint distribution are
 #'   examined; \code{0} targets the marginal distribution. Defaults to
 #'   \code{0}.
@@ -230,8 +338,15 @@ kcp_wrapper <- function(x, running_stat = c("mean", "var", "autocorr", "corr"),
 #' @examplesIf requireNamespace("CptNonPar", quietly = TRUE)
 #' res <- npmojo_wrapper(c(rnorm(100), rnorm(100, 3)))
 #' res$changepoints
+#' @family changepoint engines
 npmojo_wrapper <- function(x, G = NULL, lag = 0, ...) {
   need_pkg("CptNonPar")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(lag, "lag", min = 0)
 
   validate_data(x)
   is_mv <- is.matrix(x) || is.data.frame(x)
@@ -239,6 +354,8 @@ npmojo_wrapper <- function(x, G = NULL, lag = 0, ...) {
   n <- if (is_mv) nrow(X) else length(X)
   data_vec <- if (is_mv) as.numeric(X[, 1]) else X
 
+  # A vector failed with "'length = 2' in coercion to 'logical(1)'".
+  if (!is.null(G)) validate_scalar(G, "G", min = 1)
   if (is.null(G)) {
     # The engine rejects any bandwidth above n / 2 ("Bandwidth is too large
     # for the length of time series"), so an uncapped default of 20 makes
@@ -264,13 +381,21 @@ npmojo_wrapper <- function(x, G = NULL, lag = 0, ...) {
 
   fit <- CptNonPar::np.mojo(X_fit, G = G, lag = lag, ...)
 
-  cp_indices <- as.integer(fit$cpts)
+  cp_indices <- as.integer(fit[["cpts", exact = TRUE]])
 
+  # Exact [[ ]], not `$`: np.mojo has both `threshold` (the RULE, e.g.
+  # "bootstrap") and `threshold.val` (the number), and `$threshold.val`
+  # partial-matches nothing today only because the longer name exists --
+  # rename or drop it upstream and `$` would silently resolve to the
+  # character rule and report a cutoff of NA. cpt_scale_space() already
+  # reads it exactly for this reason; this door did not.
   ggcpt_build(
     data_vec, cp_indices,
     method = "npmojo",
     change_in = "distribution",
-    penalty = list(type = "threshold", value = fit$threshold.val %||% NA_real_),
+    penalty = list(type = "threshold",
+                   value = fit[["threshold.val", exact = TRUE]] %||%
+                     NA_real_),
     fit = fit,
     call = match.call(),
     data_wide = if (is_mv) mv_data_wide(X)

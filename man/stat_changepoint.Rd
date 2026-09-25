@@ -22,10 +22,13 @@ stat_changepoint(
 \item{data}{A data frame.}
 
 \item{geom}{The geometric object to use (default: \code{"vline"}). The stat
-computes a single \code{xintercept} per changepoint, so only geoms that
-consume that aesthetic fit — \code{"vline"} and \code{"rug"}. A geom
-needing \code{x}/\code{y}, such as \code{"point"}, errors because the
-stat drops those aesthetics.}
+computes a single \code{xintercept} per changepoint and drops
+\code{x}/\code{y}, so \code{"vline"} is the geom that fits. A geom
+needing \code{x}/\code{y} (\code{"point"}, and \code{"rug"}, which
+consumes \code{x}/\code{y} rather than \code{xintercept}) errors for
+that reason. \code{inherit.aes} is fixed at \code{TRUE} here: the stat
+re-detects on the plot's own data, so the panel's \code{x}/\code{y}
+mapping is what it reads.}
 
 \item{position}{Position adjustment.}
 
@@ -48,3 +51,20 @@ quick exploration: \code{ggplot(df, aes(t, y)) + geom_line() +
 stat_changepoint(method = "pelt")}. Draws vertical lines at detected
 changepoint locations.
 }
+\examples{
+library(ggplot2)
+set.seed(2026)
+d <- data.frame(t = 1:100, y = c(rnorm(50), rnorm(50, 4)))
+ggplot(d, aes(t, y)) + geom_line() +
+  stat_changepoint(method = "pelt", colour = "blue")
+}
+\seealso{
+Other ggplot2 layers: 
+\code{\link{geom_changepoint}()},
+\code{\link{geom_cpt_ci}()},
+\code{\link{geom_cpt_event}()},
+\code{\link{geom_cpt_label}()},
+\code{\link{geom_cpt_region}()},
+\code{\link{geom_cpt_segment}()}
+}
+\concept{ggplot2 layers}

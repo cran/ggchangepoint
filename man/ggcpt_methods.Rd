@@ -29,7 +29,7 @@ unique names); present for signature compatibility with the generic.}
 \value{
 \code{as_tibble()} and \code{as.data.frame()} return the changepoints
   table; \code{format()} returns a length-one character string; \code{plot()}
-  returns a \code{ggplot} object.
+  draws the default plot and returns the \code{ggplot} object invisibly.
 }
 \description{
 Convenience S3 methods for working with \code{ggcpt} objects: coerce the
@@ -43,4 +43,8 @@ res <- cpt_detect(c(rnorm(50), rnorm(50, 5)), method = "pelt")
 as_tibble(res)
 as.data.frame(res)
 format(res)
+}
+\seealso{
+\code{\link{ggcpt_plot_methods}} for \code{plot()} on the other
+  result classes, and \code{\link{tidy.ggcpt}()} for the tidy accessors.
 }

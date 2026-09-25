@@ -15,7 +15,9 @@
 #'   default is 2. This argument is only applied when \code{algorithm =
 #'   "divisive"}.
 #' @param seed Optional. A seed for reproducibility of the stochastic
-#'   permutation test.
+#'   permutation test. The seed is scoped to this call: \code{.Random.seed}
+#'   is saved and restored, so a seeded call inside a simulation loop does
+#'   not pin the loop's own stream.
 #' @param ... Extra arguments to pass on either from \code{e.divisive()} or
 #'   \code{e.agglo()}.
 #'
@@ -23,14 +25,17 @@
 #'   raw changepoint value corresponding to that changepoint. Changepoint
 #'   locations follow the \code{ecp} package convention: the first index of the
 #'   right segment. When no changepoint is found, an empty tibble is returned
-#'   (0 rows). The upstream fit is not retained — and \code{$fit} is
-#'   \code{NULL} on a \code{ggcpt} from \code{cpt_detect(method = "ecp")} —
+#'   (0 rows). The upstream fit is not retained (\code{$fit} is
+#'   \code{NULL} on a \code{ggcpt} from \code{cpt_detect(method = "ecp")}),
 #'   because \code{ecp::e.agglo()}'s cluster-progression matrix is quadratic
 #'   in the series length; call the \pkg{ecp} functions directly if you need
 #'   their full output.
-#' @import tibble
-#' @import ecp
-#' @import Rdpack
+# `@import tibble`, `ecp` and `Rdpack` removed: no unqualified call reaches
+# any of them. `RdMacros: Rdpack` plus `Imports: Rdpack` in DESCRIPTION is
+# what makes `\insertRef` resolve. The NAMESPACE import was not folklore,
+# though: without one, R CMD check reports "Namespace in Imports field not
+# imported from: 'Rdpack'". Rdpack's own remedy, `importFrom(Rdpack,
+# reprompt)`, now sits in the package block in R/ggchangepoint.R.
 #' @references
 #' \insertRef{james2014ecp}{ggchangepoint}
 #' @export
@@ -40,19 +45,45 @@
 #' ecp_wrapper(c(rnorm(100,0,1),rnorm(100,0,10)))
 #' ecp_wrapper(c(rnorm(100,0,1),rnorm(100,10,1)))
 #'
+#' @family changepoint engines
 ecp_wrapper <- function(data,
                         algorithm = "divisive",
                         min_size = 2,
                         seed = NULL,
                         ...){
+  reject_renamed_args(list(...), "ecp")
+  # `min_size` reaches ecp as `min.size`, so without a check here a bad value
+  # was reported as "min.size must be an integer greater than 1" -- naming
+  # the engine's argument rather than the one the caller passed -- and
+  # `min_size = NA` reached an `if` and answered "missing value where
+  # TRUE/FALSE needed". Only meaningful for algorithm = "divisive", which is
+  # where ecp itself applies it, but the check is cheap and the message is
+  # about the argument either way.
+  validate_scalar(min_size, "min_size", min = 2)
 
   algorithm <- match.arg(algorithm, c("divisive", "agglo"))
 
   if (!is.numeric(data) && !is.data.frame(data) && !is.matrix(data)) {
     stop("`data` must be a numeric vector, matrix, or data.frame.", call. = FALSE)
   }
+  # ecp absorbs non-finite values rather than refusing them, and what it
+  # returns is wrong rather than merely missing: on a 180-point series with
+  # one changepoint at 90, twenty NAs lose the changepoint entirely, and an
+  # all-NA second half reports two changepoints at 12 and 14 that the data
+  # does not contain. `cpt_wrapper()` and `cpt_detect()` have both always
+  # refused this input; only the ecp route was open. as_mv_matrix() handles
+  # the rectangular case so a non-numeric *column* is named, as everywhere
+  # else in the package.
+  finite_check <- if (is.matrix(data) || is.data.frame(data)) {
+    as_mv_matrix(data, arg = "data")
+  } else {
+    data
+  }
+  if (anyNA(finite_check) || any(!is.finite(finite_check))) {
+    stop_nonfinite(finite_check, "data")
+  }
 
-  if (!is.null(seed)) set.seed(seed)
+  local_seed(seed)
 
   estimates <- if (algorithm == "divisive") {
     ecp::e.divisive(as.matrix(data), min.size = min_size, ...)$estimates
@@ -108,6 +139,7 @@ ecp_wrapper <- function(data,
 #' ggecpplot(c(rnorm(100,0,1),rnorm(100,0,10)))
 #' ggecpplot(c(rnorm(100,0,1),rnorm(100,10,1)))
 #'
+#' @family plotting
 ggecpplot <- function(data,
                       algorithm = "divisive",
                       min_size = 2,

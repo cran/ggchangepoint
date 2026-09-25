@@ -14,6 +14,8 @@ cpt_simulate(
   sd = 1,
   df = 3,
   rho = 0,
+  seasonality = NULL,
+  sd_trend = NULL,
   seed = NULL
 )
 
@@ -32,11 +34,28 @@ or \code{"slope"}.}
 vector of segment means. For \code{var} changes, a vector of segment sds.
 For \code{meanvar}, a list of lists with \code{mean} and \code{sd} per
 segment. For \code{slope}, a list with \code{intercept} and \code{slope}
-per segment. When \code{NULL}, every segment gets the same neutral
-parameters, so the series has no actual change. Supplying fewer entries
-than there are segments recycles the last one and warns, because the
-trailing \code{changepoints} would then be recorded as ground truth
-without a change behind them.}
+per segment, and the time origin \strong{resets in every segment}:
+segment \eqn{i}'s signal is
+\eqn{\mathrm{intercept}_i + \mathrm{slope}_i \cdot (1, \ldots, l_i)}
+with the clock restarting at 1, so each intercept is the level its
+segment starts from. For a continuous piecewise-linear signal, start
+each segment where the previous one ended,
+\eqn{\mathrm{intercept}_{i+1} = \mathrm{intercept}_i +
+\mathrm{slope}_i \, l_i}: with a change at 100,
+\code{list(list(intercept = 0, slope = 1), list(intercept = 100,
+slope = -1))} rises to 100 and falls from there without a jump. A
+caller reasoning in absolute time, who writes segment 2 as the line
+\eqn{200 - t} (\code{intercept = 200}), gets it starting at 199
+instead of 99: the slope change plus an unrequested level jump. (Equal
+intercepts are continuous only when the earlier segment is flat.) When \code{NULL}, every segment gets the same neutral
+parameters, so the series has no actual change. \code{changepoints}
+sets the number of segments (\eqn{k} changepoints make \eqn{k + 1}
+of them), and a mismatch in either direction warns rather than
+passing quietly: too few entries recycles the last one, so the
+trailing \code{changepoints} would otherwise be recorded as ground
+truth with no change behind them, and too many drops the surplus, so a
+caller who miscounted the changepoints would otherwise get an ordinary
+series back with a parameter silently unused.}
 
 \item{noise}{Noise type: \code{"gauss"} (Gaussian), \code{"t"} (Student-t),
 \code{"ar1"} (AR(1)), or \code{"rw"} (random walk).}
@@ -51,7 +70,26 @@ exists. Defaults to 3.}
 \item{rho}{AR(1) autocorrelation parameter, strictly between -1 and 1 for
 stationarity. Defaults to 0. Used only when \code{noise = "ar1"}.}
 
-\item{seed}{Optional seed for reproducibility.}
+\item{seasonality}{Optional seasonal component added to the signal, as a
+list with \code{period} and \code{amplitude} (and optionally
+\code{phase}, in radians, and \code{shape}, either \code{"sine"}
+(the default) or \code{"sawtooth"}). A seasonal series is where the
+difference between a real level shift and a phase artefact starts to
+matter, and it is what \code{\link{bfast_wrapper}()} is built for; a
+detector that has never been shown one is untested against the case its
+users have.}
+
+\item{sd_trend}{Optional smoothly varying noise scale: a length-2 numeric
+giving the multiplier on \code{sd} at the first and last observation,
+interpolated log-linearly in between. Distinct from
+\code{change_in = "var"}, which is piecewise constant: this is the
+\emph{gradual} heteroscedasticity that makes constant-variance
+detectors shatter, and the condition HSMUCE, NSP-self-normalised and
+\pkg{fastcpd}'s variance families exist to handle.}
+
+\item{seed}{Optional seed for reproducibility. The seed is scoped to this
+call: \code{.Random.seed} is saved and restored, so a seeded call
+inside a simulation loop does not pin the loop's own stream.}
 
 \item{...}{Passed to \code{\link{cpt_simulate}}.}
 }
@@ -67,4 +105,20 @@ benchmarking.
 dat <- cpt_simulate(200, changepoints = c(100), change_in = "mean",
                     params = c(0, 10), seed = 2022)
 attr(dat, "true_changepoints")
+
+# a seasonal series with a level shift, and one with drifting noise
+seasonal <- cpt_simulate(240, changepoints = 120, params = c(0, 3),
+                         seasonality = list(period = 12, amplitude = 2),
+                         seed = 1)
+drifting <- cpt_simulate(240, changepoints = 120, params = c(0, 3),
+                         sd_trend = c(0.5, 3), seed = 1)
 }
+\seealso{
+Other test signals: 
+\code{\link{signal_blocks}()},
+\code{\link{signal_fms}()},
+\code{\link{signal_mix}()},
+\code{\link{signal_stairs}()},
+\code{\link{signal_teeth}()}
+}
+\concept{test signals}

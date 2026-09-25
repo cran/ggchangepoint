@@ -1,4 +1,4 @@
-#' CROPS — the full penalty path of a penalised changepoint method
+#' CROPS: the full penalty path of a penalised changepoint method
 #'
 #' Runs PELT once per \emph{distinct} optimal segmentation as the penalty
 #' ranges over \code{[pen_min, pen_max]}, using the CROPS algorithm of
@@ -19,7 +19,11 @@
 #' @return A \code{ggcpt_path} object: a list with a \code{solutions} tibble
 #'   (one row per distinct segmentation: \code{penalty}, \code{n_cpts},
 #'   \code{cost}, and a \code{cpts} list-column), the \code{data}, and
-#'   metadata. Methods: \code{print()}, \code{tidy()}, and
+#'   metadata. \code{penalty} is the \strong{lower end} of the penalty
+#'   interval on which that segmentation is optimal: CROPS returns the
+#'   breakpoints of the penalty axis, so \eqn{K} segmentations come with
+#'   \eqn{K + 1} boundaries and each row is optimal from its own
+#'   \code{penalty} up to the next row's. Methods: \code{print()}, \code{tidy()}, and
 #'   \code{autoplot()} (elbow plot by default;
 #'   \code{type = "path"} for penalty vs. number of changepoints;
 #'   \code{type = "segmentations"} for the faceted segmentations).
@@ -37,6 +41,18 @@
 #' ggplot2::autoplot(path, type = "segmentations")
 cpt_crops <- function(x, change_in = c("mean", "var", "meanvar"),
                       pen_min = NULL, pen_max = NULL, ...) {
+  # `...` reaches changepoint::cpt.mean()/cpt.var()/cpt.meanvar(), and this
+  # function pins three of their arguments -- the two that make the call
+  # CROPS at all, and the interval it sweeps. Passing any of them gave R's
+  # raw "formal argument \"penalty\" matched by multiple actual arguments",
+  # which names neither this function nor what to use instead. Same
+  # treatment as the fifty wrappers get.
+  reject_managed_args(list(...), "crops", c(
+    penalty = paste("CROPS *is* the penalty regime this function runs; a",
+                    "single penalty value is what `cpt_detect()` takes"),
+    method = paste("the penalty path is computed by PELT; the other search",
+                   "methods do not produce one"),
+    pen.value = "use `pen_min` and `pen_max` to set the interval to sweep"))
   change_in <- match.arg(change_in)
 
   validate_data(x)
@@ -74,9 +90,19 @@ cpt_crops <- function(x, change_in = c("mean", "var", "meanvar"),
     v <- as.integer(v[!is.na(v)])
     v[v >= 1 & v < n]
   })
-  # One penalty value per solution; the changepoint package returns the
-  # penalty at which each segmentation first becomes optimal.
-  if (length(pens) > length(cpts_list)) {
+  # `pen.value.full()` returns the penalty-axis BREAKPOINTS, not one value
+  # per segmentation: K + 1 boundaries delimiting K intervals of penalty on
+  # each of which one segmentation is optimal. Measured on a 240-point
+  # series swept over [2, 200]: length(pens) == 23 against
+  # nrow(cpts.full()) == 22, and pens[1] is the lower end of the swept
+  # range. So row i is optimal on [pens[i], pens[i + 1]) and its label is
+  # pens[i] -- which is what the old length-reconciliation happened to
+  # keep, by truncating the tail, without saying why. Derive it instead,
+  # and keep the reconciliation only as a backstop in case a later
+  # changepoint release changes the convention.
+  if (length(pens) == length(cpts_list) + 1L) {
+    pens <- pens[seq_along(cpts_list)]
+  } else if (length(pens) > length(cpts_list)) {
     pens <- pens[seq_along(cpts_list)]
   } else if (length(pens) < length(cpts_list)) {
     pens <- c(pens, rep(NA_real_, length(cpts_list) - length(pens)))
@@ -201,11 +227,16 @@ autoplot.ggcpt_path <- function(object,
 #' @export
 print.ggcpt_path <- function(x, ...) {
   cat("ggcpt_path (CROPS penalty path)\n")
-  cat("  Change in:      ", x$change_in, "\n")
-  cat("  Penalty range:  [", format(x$pen_range[1], digits = 4), ", ",
-      format(x$pen_range[2], digits = 4), "]\n", sep = "")
-  cat("  Series length:  ", nrow(x$data), "\n")
-  cat("  Distinct segmentations:", nrow(x$solutions), "\n\n")
+  # Wider than the default: "Distinct segmentations" outgrows it, and a
+  # label that outgrows the pad is what left this header ragged before.
+  w <- 23L
+  cat_field("Change in", x$change_in, w)
+  cat_field("Penalty range",
+            paste0("[", format(x$pen_range[1], digits = 4), ", ",
+                   format(x$pen_range[2], digits = 4), "]"), w)
+  cat_field("Series length", nrow(x$data), w)
+  cat_field("Distinct segmentations", nrow(x$solutions), w)
+  cat("\n")
   print(x$solutions[, c("penalty", "n_cpts", "cost")],
         n = min(nrow(x$solutions), 10))
   invisible(x)

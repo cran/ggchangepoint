@@ -7,83 +7,139 @@
 #' (\code{tidy()}, \code{glance()}, \code{augment()}), \code{ggplot2}
 #' integration via \code{autoplot()} and composable geoms
 #' (\code{geom_changepoint()}, \code{geom_cpt_segment()},
-#' \code{geom_cpt_ci()}, \code{stat_changepoint()}), and a unified dispatcher
-#' \code{cpt_detect()} that supports over thirty methods.
+#' \code{geom_cpt_ci()}, \code{geom_cpt_region()}, \code{geom_cpt_label()},
+#' \code{geom_cpt_event()}, \code{stat_changepoint()}), and a unified
+#' dispatcher \code{cpt_detect()} that reaches fifty methods.
 #'
-#' **Detection engines.** \code{cpt_detect()} currently dispatches to 31
-#' methods across six families (run \code{cpt_methods()} for the live
-#' table with installation status):
+#' \strong{Detection engines.} \code{cpt_detect()} dispatches to the methods in
+#' \code{cpt_methods()}, across nine families:
 #' \itemize{
 #'   \item \strong{Penalised/optimal:} PELT, BinSeg, SegNeigh, AMOC
-#'     (\pkg{changepoint}); FPOP (\pkg{fpop}); the CROPS penalty path
-#'     (\code{cpt_crops()}); fastcpd (\pkg{fastcpd}, incl. AR/ARMA/GARCH);
-#'     change-in-slope via CPOP (\pkg{cpop}).
+#'     (\pkg{changepoint}); FPOP (\pkg{fpop}); fast binary segmentation
+#'     (\pkg{binsegRcpp}); the CROPS penalty path (\code{cpt_crops()});
+#'     fastcpd (\pkg{fastcpd}, incl. AR/ARMA/GARCH); change-in-slope via
+#'     CPOP (\pkg{cpop}).
 #'   \item \strong{Multiscale/search:} WBS (\pkg{wbs}), WBS2 and TGUH
 #'     (\pkg{breakfast}), NOT (\pkg{not}), MOSUM incl. multiscale
 #'     (\pkg{mosum}), Isolate-Detect (\pkg{IDetect}), SMUCE/HSMUCE with
-#'     confidence intervals (\pkg{stepR}).
+#'     confidence intervals (\pkg{stepR}), WBS for nonstationary series
+#'     (\pkg{wbsts}).
+#'   \item \strong{Inference:} Narrowest Significance Pursuit (\pkg{nsp}),
+#'     which returns intervals rather than points.
 #'   \item \strong{Nonparametric/kernel:} NP (\pkg{changepoint.np}),
 #'     E-Divisive/E-Agglo (\pkg{ecp}), kernel running statistics
 #'     (\pkg{kcpRS}), NP-MOJO (\pkg{CptNonPar}), sequential CPM (\pkg{cpm}),
-#'     self-normalisation (\pkg{SNSeg}).
+#'     self-normalisation (\pkg{SNSeg}), depth ranks
+#'     (\pkg{KWCChangepoint}).
 #'   \item \strong{Bayesian:} Barry-Hartigan posterior (\pkg{bcp}), online
-#'     BOCPD (\pkg{ocp}), BEAST model averaging (\pkg{Rbeast}).
-#'   \item \strong{Multivariate/high-dimensional:} sparse projection
+#'     BOCPD (\pkg{ocp}), BEAST model averaging (\pkg{Rbeast}),
+#'     formula-based regression with changepoints (\pkg{mcp}).
+#'   \item \strong{High-dimensional:} sparse projection
 #'     (\pkg{InspectChangepoint}), online ocd (\pkg{ocd}), geometric mapping
-#'     (\pkg{changepoint.geo}).
-#'   \item \strong{Regression breaks and robust detection:} Bai-Perron breaks
-#'     with CIs (\pkg{strucchange}), broken-line regression
-#'     (\pkg{segmented}), changepoints-vs-autocorrelation model selection
-#'     (\pkg{EnvCpt}), drift+AR robust detection (\pkg{DeCAFS}).
+#'     (\pkg{changepoint.geo}), sparsity-adaptive ESAC and Pilliat
+#'     (\pkg{HDCD}), and covariance, network, VAR and
+#'     high-dimensional-regression changes (\pkg{changepoints}).
+#'   \item \strong{Functional and network:} functional mean and covariance
+#'     (\pkg{fChange}), NMF-based network structure (\pkg{fabisearch}).
+#'   \item \strong{Regression, trend and season:} Bai-Perron breaks with CIs
+#'     (\pkg{strucchange}), broken-line regression (\pkg{segmented}),
+#'     changepoints-vs-autocorrelation model selection (\pkg{EnvCpt}),
+#'     drift+AR robust detection (\pkg{DeCAFS}), BFAST season-and-trend
+#'     breaks (\pkg{bfast}).
+#'   \item \strong{Classical single-change tests:} Pettitt, Buishand and
+#'     SNHT (\pkg{trend}), Taylor's analyzer (\pkg{ChangePointTaylor}).
 #' }
 #'
-#' **Key features.** Every detector returns a \code{ggcpt} object with a stable
-#' \code{tibble(cp, cp_value)} contract (plus engine extras such as
-#' \code{ci_lower}/\code{ci_upper} and \code{posterior_prob}). Visualise any
-#' result directly with \code{autoplot()} (confidence intervals, fitted
-#' signals, multivariate facets), the Bayesian displays
-#' (\code{ggcpt_posterior()}, \code{ggcpt_runlength()}), or interactively
-#' via \code{ggcpt_interactive()}. Compare methods with
-#' \code{ggcpt_compare()}; run panels of series with \code{cpt_batch()};
-#' quantify uncertainty with \code{cpt_stability()}; sweep penalties with
-#' \code{cpt_crops()}. Evaluate accuracy with \code{cpt_metrics()} and
-#' \code{ggcpt_eval()}; simulate ground-truth data with
-#' \code{cpt_simulate()} and the canonical test signals; and cite the
-#' methodology behind any result with \code{cpt_cite()}.
+#' \strong{What surrounds the detectors.} Every detector returns a \code{ggcpt}
+#' object with a stable \code{tibble(cp, cp_value)} contract, optionally
+#' carrying a time index, engine confidence intervals, a fitted signal,
+#' significance regions and diagnostics. Around that:
+#' \itemize{
+#'   \item \strong{Inference:} \code{cpt_confint()} (four provenances, one
+#'     contract), \code{cpt_test()}, \code{cpt_regions()}.
+#'   \item \strong{Choosing K:} \code{cpt_select()} (BIC, Zhang-Siegmund
+#'     mBIC, AIC, CROPS elbow, cross-validation, stability),
+#'     \code{cpt_crops()}, \code{cpt_penalty()}.
+#'   \item \strong{Diagnostics:} \code{cpt_influence()}, \code{cpt_leverage()},
+#'     \code{cpt_sensitivity()}, \code{cpt_stability()},
+#'     \code{cpt_statistic()}, \code{cpt_solution_path()},
+#'     \code{cpt_scale_space()}.
+#'   \item \strong{Supervised detection:} \code{cpt_labels()},
+#'     \code{cpt_label_error()}, \code{cpt_label_error_curve()},
+#'     \code{cpt_learn_penalty()}.
+#'   \item \strong{Choosing a method:} \code{cpt_recommend()},
+#'     \code{cpt_consensus()}, \code{ggcpt_compare()}.
+#'   \item \strong{Evaluation:} \code{cpt_metrics()},
+#'     \code{cpt_metrics_annotated()}, \code{cpt_benchmark()},
+#'     \code{cpt_datasets()}, \code{cpt_load_tcpd()}.
+#'   \item \strong{Streaming:} \code{cpt_monitor()}, \code{cpt_update()},
+#'     \code{alarms()}, \code{cpt_replay()}, \code{cpt_delay()}.
+#'   \item \strong{Study design:} \code{cpt_simulate()}, \code{cpt_power()},
+#'     \code{cpt_min_detectable()}, \code{cpt_scenarios()}.
+#'   \item \strong{Communication:} \code{cpt_annotate_events()},
+#'     \code{cpt_report()}, \code{cpt_gt()}, \code{ggcpt_interactive()},
+#'     \code{cpt_cite()}.
+#'   \item \strong{Extension:} \code{as_ggcpt()} and
+#'     \code{cpt_register_method()} bring detectors this package does not and
+#'     cannot depend on into the same grammar.
+#' }
+#'
+#' @seealso The entry points, by group:
+#'   \itemize{
+#'     \item \strong{Detect:} \code{\link{cpt_detect}()},
+#'       \code{\link{cpt_methods}()}, \code{\link{cpt_register_method}()}.
+#'     \item \strong{Visualise:} \code{\link{autoplot.ggcpt}()},
+#'       \code{\link{ggcptplot}()}, \code{\link{ggcpt_compare}()}.
+#'     \item \strong{Inference and selection:} \code{\link{cpt_confint}()},
+#'       \code{\link{cpt_test}()}, \code{\link{cpt_select}()}.
+#'     \item \strong{Choosing and combining methods:}
+#'       \code{\link{cpt_consensus}()}, \code{\link{cpt_recommend}()},
+#'       \code{\link{cpt_benchmark}()}.
+#'     \item \strong{Evaluation:} \code{\link{cpt_metrics}()}.
+#'     \item \strong{Streaming:} \code{\link{cpt_monitor}()}.
+#'     \item \strong{Study design:} \code{\link{cpt_simulate}()},
+#'       \code{\link{cpt_power}()}.
+#'     \item \strong{Communication:} \code{\link{cpt_report}()}.
+#'   }
+#'
+#'   Useful links:
+#'   \itemize{
+#'     \item \url{https://pursuitofdatascience.github.io/ggchangepoint/}
+#'     \item Report bugs at
+#'       \url{https://github.com/PursuitOfDataScience/ggchangepoint/issues}
+#'   }
 #'
 #' @importFrom generics tidy glance augment
 #' @importFrom utils globalVariables
+#' @importFrom Rdpack reprompt
 #' @keywords internal
 "_PACKAGE"
 
-if(getRversion() >= "2.15.1")  utils::globalVariables(c(".",
-                                                        "cp",
-                                                        "cp_value",
-                                                        "end",
-                                                        "index",
-                                                        "param_estimate",
-                                                        "raw_value",
-                                                        "start",
-                                                        "type",
-                                                        "value",
-                                                        "x",
-                                                        "xend",
-                                                        "y",
-                                                        "xmin",
-                                                        "xmax",
-                                                        "n_cpts",
-                                                        "cost",
-                                                        "penalty",
-                                                        "freq",
-                                                        "run_length",
-                                                        "time",
-                                                        "prob",
-                                                        "coordinate",
-                                                        "yint",
-                                                        ".ymin",
-                                                        ".ymax",
-                                                        ".ymin_val",
-                                                        ".ymax_val"))
+if (getRversion() >= "2.15.1") {
+  # Columns referenced inside aes() by name. R CMD check cannot see through
+  # non-standard evaluation, so every such name has to be declared once here
+  # or it is reported as an undefined global.
+  utils::globalVariables(c(
+    # 0.4.0
+    ".", "cp", "cp_value", "end", "index", "param_estimate", "raw_value",
+    "start", "type", "value", "x", "xend", "y", "xmin", "xmax", "n_cpts",
+    "cost", "penalty", "freq", "run_length", "time", "prob", "coordinate",
+    "yint", ".ymin", ".ymax", ".ymin_val", ".ymax_val",
+    # 0.5.0: diagnostics, selection and influence
+    "leverage", "perturbed", "perturbed_x", "cp_x", "param_shift", "shift",
+    "position", "k", "chosen", "statistic", "threshold", "step", "contrast",
+    "selected", "start_x", "end_x", "index_x", "bandwidth", "panel",
+    ".setting", "n_cp",
+    # 0.5.0: supervised detection, events and communication
+    "change", "status", "label", "count", "kind", "errors",
+    # 0.5.0: consensus, benchmarking, monitoring and power
+    "method", "series", "dataset", "mean_rank", "within_cd", "delay",
+    "detected", "jump", "power", "lower", "upper", "truth", "ci",
+    "scale_space", "path", ".at",
+    # cpt_power()'s autoplot() maps the series length `n`
+    "n"
+  ))
+}
 
 # Shared internal helper for rendering changepoint plots
 # Used by ggcptplot(), ggecpplot(), and autoplot.ggcpt()
@@ -191,6 +247,24 @@ validate_scalar <- function(value, name, min = -Inf, max = Inf,
   invisible(TRUE)
 }
 
+# Internal: check a set of candidate values (a tuning grid, a multiscale
+# bandwidth set), which validate_scalar() cannot: one or more finite
+# numbers, each in range.
+#' @noRd
+validate_grid <- function(value, name, min = -Inf, min_open = FALSE) {
+  ok <- is.numeric(value) && length(value) >= 1L && all(is.finite(value)) &&
+    all(if (min_open) value > min else value >= min)
+  if (!ok) {
+    stop("`", name, "` must be one or more finite numbers",
+         if (is.finite(min)) {
+           paste0(", each ", if (min_open) "greater than " else "at least ",
+                  min)
+         },
+         " (got ", paste(format(value), collapse = ", "), ").", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 # Internal: check a switch documented as "Logical". `isTRUE()` treats every
 # non-TRUE value as FALSE, so `show_segments = 1` or `show_fit = "TRUE"`
 # silently drew nothing, and `show_line = 1` silently removed the line the
@@ -204,6 +278,154 @@ validate_flag <- function(value, name, allow_null = FALSE) {
          paste(format(value), collapse = ", "), ").", call. = FALSE)
   }
   invisible(TRUE)
+}
+
+# Internal: seed the RNG for the duration of one call, and give the caller
+# their stream back.
+#
+# A bare `set.seed(seed)` in a function's own frame does not
+# merely *consume* the caller's random stream, it *resets* it -- so a `seed`
+# argument whose whole purpose is trustworthiness silently pins the stream
+# of whatever loop the call sits inside. Measured, with the data generated
+# outside the call so that data generation cannot be mistaken for the
+# effect:
+#
+#   set.seed(2026)
+#   for (i in 1:6) {
+#     d <- c(rnorm(100), rnorm(100, 3))
+#     f <- cpt_detect(d, method = "wbs", seed = 1)
+#   }
+#
+# Iteration 1's `set.seed(1)` pins the stream, so every later `rnorm()`
+# starts from the same place: **6 of 6 distinct datasets without the seed,
+# 2 of 6 with it.** The same collapse was measured through `nsp`,
+# `cpt_stability()`, `cpt_select(criterion = "cv")` and `cpt_simulate()` --
+# which is to say through exactly the functions a user calls inside a
+# simulation loop, and a study that silently has a sample size of one is
+# worse than one that fails.
+#
+# So the seed is scoped to the call. `.Random.seed` is saved before
+# `set.seed()` and restored when the calling function exits, which leaves
+# every documented behaviour intact -- a seeded call is still
+# byte-reproducible, and still reproducible across intervening draws --
+# and removes the side effect nobody asked for. Nested calls stack
+# correctly: an inner scope restores what the outer one had set.
+#
+# The handler is registered in the *caller's* frame rather than here,
+# because a helper's own `on.exit()` would fire the moment the helper
+# returns. `add = TRUE` because two wrappers already register a
+# search-path restore, and neither is disturbed.
+#' @noRd
+local_seed <- function(seed, envir = parent.frame()) {
+  if (is.null(seed)) return(invisible(FALSE))
+  g <- globalenv()
+  # A fresh session has no `.Random.seed` until the first draw, and leaving
+  # one behind would itself be a change to the caller's state.
+  had <- exists(".Random.seed", envir = g, inherits = FALSE)
+  old <- if (had) get(".Random.seed", envir = g, inherits = FALSE) else NULL
+  nm <- ".__ggchangepoint_restore_seed__"
+  assign(nm, function() {
+    if (had) {
+      assign(".Random.seed", old, envir = g)
+    } else if (exists(".Random.seed", envir = g, inherits = FALSE)) {
+      rm(".Random.seed", envir = g)
+    }
+  }, envir = envir)
+  do.call(base::on.exit,
+          list(substitute(f(), list(f = as.name(nm))), add = TRUE),
+          envir = envir)
+  set.seed(seed)
+  invisible(TRUE)
+}
+
+# Internal: refuse an engine argument the wrapper sets for itself.
+#
+# Every wrapper forwards `...` to its engine, and several also pin one of
+# that engine's own arguments -- because the pin is what makes the method
+# the method (`tguh`'s solution path), what makes the result extractable at
+# all (SMUCE's `jumpint`, bocpd's `getR`), or what stops the engine drawing
+# a plot or narrating into the caller's console. `...` is documented as
+# reaching the engine, so passing one of those is a reasonable thing to
+# try -- and it used to reach R's own argument matcher and stop with
+# "formal argument \"verbose\" matched by multiple actual arguments",
+# which names neither the wrapper, nor the engine, nor what to do instead.
+# Measured across the registry, twelve wrapper/argument pairs behaved that
+# way.
+#' @noRd
+reject_managed_args <- function(dots, method, managed) {
+  clash <- intersect(names(dots), names(managed))
+  if (length(clash) == 0L) return(invisible(TRUE))
+  stop("`", method, "` sets `", clash[1], "` itself, so it cannot be ",
+       "supplied through `...`: ", managed[[clash[1]]],
+       if (length(clash) > 1) paste0(" (same for `",
+         paste(clash[-1], collapse = "`, `"), "`.)"), call. = FALSE)
+}
+
+# Internal: the engine argument names this package renames, and what to use
+# instead.
+#
+# Most wrappers rename their engine's arguments into this package's snake_case
+# (`n_intervals` for wbs's `M`, `cpm_type` for cpm's `cpmType`, `min_dist` for
+# fabisearch's `mindist`) or derive them from `x`. But `...` is documented on
+# every wrapper as reaching the engine, so the engine's *own* name is the
+# natural thing for a reader of the upstream help page to pass -- and it then
+# collides with the one the wrapper already supplies, giving R's raw "formal
+# argument \"mindist\" matched by multiple actual arguments". Sweeping every
+# wrapper against every argument its engine accepts found 23 such pairs.
+#
+# This is the same failure as reject_managed_args() handles, but for arguments
+# the wrapper renames rather than pins, so the answer is a redirection rather
+# than a refusal: name the argument that does the job.
+#' @noRd
+renamed_engine_args <- function(method) {
+  switch(method,
+    ecp          = c(min.size = "min_size"),
+    fpop         = c(lambda = "penalty"),
+    wbs          = c(M = "n_intervals"),
+    wbsts        = c(M = "n_intervals"),
+    cpop         = c(beta = "penalty"),
+    decafs       = c(beta = "penalty"),
+    bocpd        = c(hazard_func = "hazard"),
+    cpm          = c(cpmType = "cpm_type", ARL0 = "arl0"),
+    kcp          = c(RS_fun = "running_stat", RS_name = "running_stat",
+                     Kmax = "kmax"),
+    sn           = c(ts = NA_character_, paras_to_test = "parameter"),
+    ocd          = c(dim = NA_character_, MC_reps = "mc_reps"),
+    strucchange  = c(formula = NA_character_),
+    segmented    = c(seg.Z = NA_character_),
+    fabisearch   = c(mindist = "min_dist", nruns = "n_runs",
+                     nreps = "n_reps", ncore = "n_core"),
+    bfast        = c(max.iter = "max_iter"),
+    # Not a registry method: `cpt_wrapper()` and `ggcptplot()` both rename
+    # the changepoint package's `method` to `cp_method`, because `method`
+    # already means "which detector" everywhere else in this package. That
+    # made `method` through `...` the single most natural thing to pass and
+    # the one that collided.
+    cpt_wrapper  = c(method = "cp_method"),
+    NULL)
+}
+
+# `label` names the function in the message when it differs from the map
+# key: `ggcptplot()` shares `cpt_wrapper()`'s rename, and being told about
+# a function you did not call is the failure this whole guard exists to
+# stop.
+#' @noRd
+reject_renamed_args <- function(dots, method, label = method) {
+  map <- renamed_engine_args(method)
+  if (is.null(map)) return(invisible(TRUE))
+  clash <- intersect(names(dots), names(map))
+  if (length(clash) == 0L) return(invisible(TRUE))
+  a <- clash[1]
+  use <- map[[a]]
+  stop("`", label, "` ", if (is.na(use)) "derives" else "renames",
+       " its engine's `", a, "` argument, so passing it through `...` ",
+       "collides with the value this package already supplies. ",
+       if (is.na(use)) {
+         paste0("`", a, "` comes from `x` and is not yours to set.")
+       } else {
+         paste0("Use `", use, "` instead.")
+       },
+       call. = FALSE)
 }
 
 # Internal: a user-supplied `index` labels the x axis, so it must line up
@@ -221,29 +443,163 @@ validate_index <- function(index, n) {
   invisible(TRUE)
 }
 
+# as.matrix() on a data.frame with ONE non-numeric column returns an
+# all-character matrix, so "`x` must be numeric" blamed the whole series for
+# one bad column and left the reader to find it. Shared by validate_data()
+# and as_mv_matrix(), the two front doors a data.frame can arrive through.
+nonnumeric_columns_note <- function(x) {
+  if (!is.data.frame(x)) return("")
+  bad <- names(x)[!vapply(x, is.numeric, logical(1))]
+  if (length(bad) == 0L) return("")
+  cls <- vapply(x[bad], function(z) class(z)[1], character(1))
+  paste0(" Not numeric: ", paste0("`", bad, "` (", cls, ")", collapse = ", "),
+         ". Coercing a factor gives its level codes, an alphabetical ",
+         "ordering of the labels, not the data.")
+}
+
+# A univariate entry point must not silently unroll a rectangular input.
+# as.numeric() on a matrix concatenates its columns, which invents a
+# changepoint at every join: cpt_wrapper() on a 120x2 matrix reported 58,
+# 120 and 180, where the 120 is the seam and only the 58 is real. A single
+# column is exempt -- there is no join for anything to be invented at.
+reject_multicolumn <- function(x, arg = "x", hint = "") {
+  if ((is.matrix(x) || is.data.frame(x)) && ncol(x) != 1L) {
+    stop("`", arg, "` is a ", class(x)[1], " with ", ncol(x),
+         " columns, but this takes a single series. Concatenating the ",
+         "columns would invent a changepoint at each join.",
+         if (nzchar(hint)) paste0(" ", hint) else "", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# Seven sites refused a non-finite series, and four of them said only
+# "must be finite (no NA/NaN/Inf)" -- which does not tell the caller whether
+# one stray NA slipped into a 10,000-point series or half of it is missing.
+# Those are different problems with different fixes, so the count travels
+# with the message, from one definition rather than seven copies.
+stop_nonfinite <- function(x, arg = "x") {
+  stop("`", arg, "` must be finite (no NA/NaN/Inf); ", sum(!is.finite(x)),
+       " of ", length(x), " values are not.", call. = FALSE)
+}
+
 # Validate input data
 validate_data <- function(x) {
   if (is.data.frame(x) || is.matrix(x)) {
     x_num <- as.matrix(x)
     if (!is.numeric(x_num)) {
-      stop("`x` must be numeric.", call. = FALSE)
+      stop("`x` must be numeric.", nonnumeric_columns_note(x), call. = FALSE)
     }
     if (anyNA(x_num) || any(!is.finite(x_num))) {
-      stop("`x` must be finite (no NA/NaN/Inf).", call. = FALSE)
+      stop_nonfinite(x_num)
     }
     if (nrow(x_num) < 3) {
       stop("`x` must have at least 3 observations.", call. = FALSE)
     }
-  } else if (is.numeric(x)) {
+  } else if (is.numeric(x) || is.logical(x)) {
+    # A logical series is a legitimate 0/1 series, and cpt_detect() already
+    # coerces one before it gets here; accepting it makes the tools that
+    # validate first agree with the tools that coerce first.
     x <- as.numeric(x)
     if (anyNA(x) || any(!is.finite(x))) {
-      stop("`x` must be finite (no NA/NaN/Inf).", call. = FALSE)
+      stop_nonfinite(x)
     }
     if (length(x) < 3) {
       stop("`x` must have at least 3 observations.", call. = FALSE)
     }
   } else {
+    # Not a series at all. coerce_series_values() names the specific trap --
+    # a factor's level codes, character input -- and rejects anything else
+    # with the general message; the stop() below is only a backstop.
+    coerce_series_values(x)
     stop("`x` must be a numeric vector, matrix, or data.frame.", call. = FALSE)
   }
   invisible(TRUE)
+}
+
+# Internal: user-supplied changepoint LOCATIONS, wherever they arrive --
+# `cp`, `pred`, `truth`, `annotations`, `changepoints`, a label's `start`
+# and `end`. Every one of these used to be read through a bare
+# `as.integer()`, and `as.integer()` on a factor returns LEVEL POSITIONS:
+# `cpt_metrics(factor(c("100", "150")), c(100, 150), n = 200)` read the
+# predictions as 1 and 2 and reported a recall of 0. That is worse than an
+# error, because it is a plausible number. A logical vector is a mask over
+# the series rather than a set of positions, and an NA the coercion invented
+# (from text that is not a number) is a wrong-type input rather than the
+# missing value the drop rules are about.
+#' @noRd
+as_cp_locations <- function(x, arg = "cp", sort = FALSE) {
+  if (is.null(x)) return(integer(0))
+  if (is_ggcpt(x)) {
+    stop("`", arg, "` takes changepoint indices, not a `ggcpt` object. ",
+         "Pass the locations instead, e.g. `fit$changepoints$cp` or ",
+         "`tidy(fit)$cp`.", call. = FALSE)
+  }
+  if (is.data.frame(x)) {
+    if ("cp" %in% names(x)) {
+      stop("`", arg, "` takes changepoint indices, not a table. Pass the ",
+           "column, e.g. `", arg, "$cp`.", call. = FALSE)
+    }
+    stop("`", arg, "` takes changepoint indices, not a table.", call. = FALSE)
+  }
+  if (is.factor(x)) {
+    stop("`", arg, "` is a factor. Coercing a factor gives its level codes ",
+         "(alphabetical positions), not the locations. Convert it first, ",
+         "e.g. as.integer(as.character(", arg, ")).", call. = FALSE)
+  }
+  if (is.logical(x)) {
+    stop("`", arg, "` is logical. Changepoint locations are positions, not ",
+         "a mask over the series; pass which(", arg, ").", call. = FALSE)
+  }
+  was_na <- is.na(x)
+  out <- suppressWarnings(as.integer(x))
+  invented <- is.na(out) & !was_na
+  if (any(invented)) {
+    bad <- unique(as.character(x)[invented])
+    stop("`", arg, "` must be changepoint locations; ", sum(invented),
+         " value(s) are not numbers: ",
+         paste0("\"", utils::head(bad, 5), "\"", collapse = ", "), ".",
+         call. = FALSE)
+  }
+  if (isTRUE(sort)) sort(unique(out)) else out
+}
+
+# Internal: turn a non-matrix series into the numeric vector the engines
+# take, refusing the coercions that answer a different question. as.numeric()
+# on a factor returns the LEVEL CODES, so a factor series would be detected
+# on an alphabetical ordering of its labels with nothing said about it; on
+# character it returns NAs with base R's "NAs introduced by coercion", after
+# which validate_data() blames non-finite data rather than the text.
+#' @noRd
+coerce_series_values <- function(x, arg = "x") {
+  if (is.factor(x)) {
+    stop("`", arg, "` is a factor. Detection needs numbers, and coercing a ",
+         "factor gives its level codes: an alphabetical ordering of the ",
+         "labels, not the data. Convert it deliberately, e.g. ",
+         "as.numeric(as.character(", arg, ")).", call. = FALSE)
+  }
+  if (is.character(x)) {
+    stop("`", arg, "` is character. `", arg, "` must be a numeric vector, ",
+         "matrix, or data.frame; convert it first, e.g. as.numeric(", arg,
+         ").", call. = FALSE)
+  }
+  # Everything else keeps whatever as.numeric() already did for it -- a ts,
+  # a zoo, a table, a difftime all convert cleanly -- and is refused only
+  # when R itself flags the conversion, which is what a list or any other
+  # unconvertible type does.
+  clean <- TRUE
+  num <- tryCatch(
+    withCallingHandlers(as.numeric(x), warning = function(w) {
+      clean <<- FALSE
+      invokeRestart("muffleWarning")
+    }),
+    error = function(e) {
+      clean <<- FALSE
+      NULL
+    }
+  )
+  if (!clean || is.null(num)) {
+    stop("`", arg, "` must be a numeric vector, matrix, or data.frame, not ",
+         class(x)[1], ".", call. = FALSE)
+  }
+  num
 }

@@ -1,4 +1,4 @@
-#' CPOP wrapper — optimal change-in-slope detection
+#' CPOP wrapper: optimal change-in-slope detection
 #'
 #' Wraps \code{cpop::cpop()} (Fearnhead, Maidstone and Letchford, 2019;
 #' Fearnhead and Grose, 2024): exact penalised estimation of a
@@ -29,8 +29,10 @@
 #' res <- cpop_wrapper(y)
 #' res$changepoints
 #' ggplot2::autoplot(res, show_fit = TRUE)
+#' @family changepoint engines
 cpop_wrapper <- function(x, penalty = NULL, sd = NULL, ...) {
   need_pkg("cpop")
+  reject_renamed_args(list(...), "cpop")
 
   if (!is.null(sd)) validate_scalar(sd, "sd", min = 0, min_open = TRUE)
 
@@ -38,9 +40,21 @@ cpop_wrapper <- function(x, penalty = NULL, sd = NULL, ...) {
   data_vec <- as_uni_vector(x, "cpop")
   n <- length(data_vec)
 
+  # "Manual" is reserved for a number the caller actually supplied
+  # (penalty_descriptor() keys on is.numeric(penalty)), so reporting this
+  # wrapper's own default as "Manual = 11.8" hid a documented consequence:
+  # `?cpt_detect`'s @param penalty explains that the dispatcher's default
+  # MBIC resolves to a STRONGER value than 2*log(n) -- 19.9 against 11.8 at
+  # n = 360 -- and both paths labelled the result the same way, so the
+  # object gave no way to tell which default produced it.
+  pen_type <- if (is.null(penalty)) "2log(n) [wrapper default]" else "Manual"
+  penalty <- resolve_penalty_model(penalty, data_vec)
   if (is.null(penalty)) {
     penalty <- 2 * log(n)
   }
+  # A vector failed with "number of items to replace is not a multiple of
+  # replacement length", and a negative value segmented every observation.
+  validate_scalar(penalty, "penalty", min = 0)
 
   # Pass an explicit 1-based x grid so reported locations are indices.
   args <- list(y = data_vec, x = seq_len(n), beta = penalty, ...)
@@ -57,7 +71,7 @@ cpop_wrapper <- function(x, penalty = NULL, sd = NULL, ...) {
     data_vec, cp_indices,
     method = "cpop",
     change_in = "slope",
-    penalty = list(type = "Manual", value = penalty),
+    penalty = list(type = pen_type, value = penalty),
     fit = fit,
     call = match.call(),
     fitted = fitted

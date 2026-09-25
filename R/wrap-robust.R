@@ -1,16 +1,16 @@
-#' DeCAFS wrapper — changes amid drift and autocorrelated noise
+#' DeCAFS wrapper: changes amid drift and autocorrelated noise
 #'
 #' Wraps \code{DeCAFS::DeCAFS()} (Romano, Rigaill, Runge and Fearnhead,
 #' 2022), which detects abrupt mean changes when the underlying signal also
-#' drifts (random-walk fluctuations) and the noise is AR(1)-autocorrelated —
+#' drifts (random-walk fluctuations) and the noise is AR(1)-autocorrelated,
 #' the two regimes in which plain change-in-mean methods over-detect. Model
 #' parameters are estimated automatically unless supplied.
 #'
 #' @param x A numeric vector.
 #' @param penalty Penalty \eqn{\beta} for adding a changepoint. Defaults to
 #'   \code{2 * log(length(x))}. \code{\link{cpt_detect}} resolves its own
-#'   \code{"MBIC"} default to a stronger numeric value — on a five-changepoint
-#'   series that is 3 changepoints through the dispatcher against 5 here — so
+#'   \code{"MBIC"} default to a stronger numeric value (on a five-changepoint
+#'   series that is 3 changepoints through the dispatcher against 5 here), so
 #'   pass \code{penalty} explicitly when the two must agree.
 #' @param model_param Optional list of model parameters
 #'   (\code{sdEta}, \code{sdNu}, \code{phi}) as accepted by
@@ -26,15 +26,32 @@
 #' set.seed(2026)
 #' res <- decafs_wrapper(c(rnorm(100), rnorm(100, 5)))
 #' res$changepoints
+#' @family changepoint engines
 decafs_wrapper <- function(x, penalty = NULL, model_param = NULL, ...) {
   need_pkg("DeCAFS")
-
+  reject_renamed_args(list(...), "decafs")
+  reject_managed_args(list(...), "decafs", c(
+    warningMessage = paste("the wrapper turns the engine's own advisory off",
+                           "and raises the conditions R users expect",
+                           "instead")))
   validate_data(x)
   data_vec <- as_uni_vector(x, "decafs")
 
+  # "Manual" is reserved for a number the caller actually supplied
+  # (penalty_descriptor() keys on is.numeric(penalty)), so reporting this
+  # wrapper's own default as "Manual = 11.8" hid a documented consequence:
+  # `?cpt_detect`'s @param penalty explains that the dispatcher's default
+  # MBIC resolves to a STRONGER value than 2*log(n) -- 19.9 against 11.8 at
+  # n = 360 -- and both paths labelled the result the same way, so the
+  # object gave no way to tell which default produced it.
+  pen_type <- if (is.null(penalty)) "2log(n) [wrapper default]" else "Manual"
+  penalty <- resolve_penalty_model(penalty, data_vec)
   if (is.null(penalty)) {
     penalty <- 2 * log(length(data_vec))
   }
+  # A vector failed with Rcpp's "Expecting a single value: [extent=2]", and
+  # a negative value segmented every observation.
+  validate_scalar(penalty, "penalty", min = 0)
 
   args <- list(data = data_vec, beta = penalty, warningMessage = FALSE, ...)
   if (!is.null(model_param)) args$modelParam <- model_param
@@ -44,7 +61,7 @@ decafs_wrapper <- function(x, penalty = NULL, model_param = NULL, ...) {
     data_vec, as.integer(fit$changepoints),
     method = "decafs",
     change_in = "mean",
-    penalty = list(type = "Manual", value = penalty),
+    penalty = list(type = pen_type, value = penalty),
     fit = fit,
     call = match.call(),
     fitted = as.numeric(fit$signal)
@@ -56,8 +73,8 @@ decafs_wrapper <- function(x, penalty = NULL, model_param = NULL, ...) {
 #' Wraps \code{SNSeg::SNSeg_Uni()} (Zhao, Jiang and Shao, 2022):
 #' self-normalised segmentation with nested local windows. Self-normalisation
 #' avoids estimating the long-run variance, is robust to temporal dependence,
-#' and detects changes in general parameters — mean, variance, quantiles,
-#' autocorrelation, or bivariate correlation — within one framework.
+#' and detects changes in general parameters (mean, variance, quantiles,
+#' autocorrelation, or bivariate correlation) within one framework.
 #'
 #' @param x A numeric vector (or a two-column matrix for
 #'   \code{parameter = "bivcor"}).
@@ -81,10 +98,26 @@ decafs_wrapper <- function(x, penalty = NULL, model_param = NULL, ...) {
 #' res <- sn_wrapper(c(rnorm(150), rnorm(150, 3)))
 #' res$changepoints
 #' }
+#' @family changepoint engines
 sn_wrapper <- function(x, parameter = c("mean", "variance", "acf", "bivcor"),
                        confidence = 0.9, grid_size = NULL, ...) {
   need_pkg("SNSeg")
+  reject_renamed_args(list(...), "sn")
+  # Forwarded to the engine, which reported a bad value from deep inside
+  # itself -- "missing value where TRUE/FALSE needed", "negative length
+  # vectors are not allowed", "NAs in foreign function call" and the like,
+  # none of which names the argument. Measured across all 64 wrapper
+  # argument slots; these are the ones that needed it.
+  validate_scalar(confidence, "confidence", min = 0, max = 1, min_open = TRUE, max_open = TRUE)
+  reject_managed_args(list(...), "sn", c(
+    plot_SN = paste("SNSeg would draw to the active device; this wrapper",
+                    "returns a ggcpt and leaves plotting to",
+                    "`autoplot()`")))
   parameter <- match.arg(parameter)
+  # `NA`, a vector or a string failed inside the engine without naming it.
+  if (!is.null(grid_size)) {
+    validate_scalar(grid_size, "grid_size", min = 0, min_open = TRUE)
+  }
 
   validate_data(x)
   is_mv <- is.matrix(x) || is.data.frame(x)
@@ -136,6 +169,29 @@ sn_wrapper <- function(x, parameter = c("mean", "variance", "acf", "bivcor"),
              " observations leave no room for the self-normalisation ",
              "windows (about 20 are needed at the default `grid_size`).",
              call. = FALSE)
+      }
+      # A constant RUN, not a constant series: the guard above catches a
+      # column that never moves, but a series with a long enough flat
+      # stretch anywhere in it puts a zero variance inside one
+      # self-normalisation window, and the engine answers with base R's
+      # "missing value where TRUE/FALSE needed". Measured on noise with a
+      # leading run of zeros, the smallest breaking run tracks the window
+      # size: 6 at n = 60, 10 at n = 100, 14 at n = 150, 20 at n = 200 --
+      # so this is diagnosed from the engine's failure rather than
+      # predicted, which avoids reverse-engineering `grid_size` and cannot
+      # refuse a series the engine would have handled.
+      if (grepl("missing value where TRUE/FALSE needed",
+                conditionMessage(e), fixed = TRUE)) {
+        runs <- rle(as.numeric(data_vec))$lengths
+        if (max(runs) >= 2L) {
+          stop("`sn` could not self-normalise this series. Its longest run ",
+               "of identical values is ", max(runs), " of ",
+               length(data_vec), " observations, which leaves a window with ",
+               "zero variance; roughly a tenth of the series is enough to ",
+               "do it. Use `parameter = \"variance\"` on a series that does ",
+               "vary, jitter the ties, or pick a method that tolerates flat ",
+               "stretches (`pelt`, `binseg`, `pettitt`).", call. = FALSE)
+        }
       }
       stop(e)
     }

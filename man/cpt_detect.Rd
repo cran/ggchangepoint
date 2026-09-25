@@ -4,31 +4,53 @@
 \alias{cpt_detect}
 \title{Unified changepoint detection dispatcher}
 \usage{
-cpt_detect(x, method = "pelt", change_in = "mean", penalty = "MBIC", ...)
+cpt_detect(
+  x,
+  method = "pelt",
+  change_in = "mean",
+  penalty = "MBIC",
+  index = NULL,
+  y = NULL,
+  ...
+)
 }
 \arguments{
-\item{x}{A numeric vector for univariate methods, or a numeric
-matrix/data frame (rows are time points) for the multivariate methods
-(\code{"ecp"}, \code{"inspect"}, \code{"geomcp"}, \code{"ocd"},
-\code{"npmojo"}, \code{"kcp"}, \code{"fastcpd"}).}
+\item{x}{The series. A numeric vector for univariate methods, or a
+numeric matrix/data frame (rows are time points) for the multivariate
+methods (run \code{subset(cpt_methods(), multivariate)$method} for the
+list). A \code{ts}, \code{xts}, \code{zoo} or (unkeyed) \code{tsibble}
+is accepted directly and its time index is carried through to
+\code{tidy()} and \code{autoplot()}; so is a data frame together with
+\code{y} (and optionally \code{index}).}
 
-\item{method}{Detection method. One of \code{"pelt"}, \code{"binseg"},
-\code{"segneigh"}, \code{"amoc"}, \code{"np"}, \code{"ecp"},
-\code{"fpop"}, \code{"wbs"}, \code{"wbs2"}, \code{"not"},
-\code{"mosum"}, \code{"idetect"}, \code{"tguh"}, \code{"smuce"},
-\code{"hsmuce"}, \code{"cpop"}, \code{"bcp"}, \code{"bocpd"},
-\code{"beast"}, \code{"cpm"}, \code{"kcp"}, \code{"npmojo"},
-\code{"decafs"}, \code{"sn"}, \code{"inspect"}, \code{"ocd"},
-\code{"geomcp"}, \code{"strucchange"}, \code{"segmented"},
-\code{"envcpt"}, or \code{"fastcpd"}. Methods whose engines live in
-\code{Suggests} prompt for installation when missing.}
+\item{method}{Detection method: any \code{method} in
+\code{cpt_methods()} whose \code{status} is \code{"available"} or
+\code{"registered"}. Methods whose engines live in \code{Suggests}
+report what to install when missing;
+\code{\link{cpt_register_method}()} adds detectors this package does
+not wrap.}
 
 \item{change_in}{What to detect change in. One of \code{"mean"},
-\code{"var"}, \code{"meanvar"}, \code{"slope"}, or
-\code{"distribution"}. Defaults to \code{"mean"}. The requested value
-is validated against the method's capabilities
-(see \code{cpt_methods()}); incompatible combinations error rather than
-silently running something else.}
+  \code{"var"}, \code{"meanvar"}, \code{"slope"},
+  \code{"distribution"}, \code{"covariance"}, \code{"network"},
+  \code{"regression"} or \code{"seasonality"}. Defaults to
+  \code{"mean"}. The requested value is validated against the method's
+  capabilities (see \code{cpt_methods()}); incompatible combinations
+  error rather than silently running something else.
+
+  A \emph{compatible} request may still be routed to the method's own
+  native change type, because several engines have no separate estimator
+  for the thing being asked about. That is never silent: the result's
+  \code{change_in} records what was actually detected, so compare it
+  with what you asked for. Measured across every method and every value
+  its \code{supports} entry lists, six pairs are routed:
+  \code{not}'s \code{"var"} becomes \code{"meanvar"} (its variance
+  contrast is piecewise-constant in mean \emph{and} variance),
+  \code{cpm}'s \code{"mean"} and \code{"var"} both become
+  \code{"distribution"}, \code{kcp}'s become \code{"running mean"} and
+  \code{"running var"}, and \code{wbsts}'s \code{"mean"} becomes
+  \code{"var"} (it detects change in the wavelet spectrum). Every other
+  listed combination returns the change type it was asked for.}
 
 \item{penalty}{Penalty type or value. Either a character string
 (\code{"MBIC"}, \code{"BIC"}, \code{"SIC"}, \code{"AIC"},
@@ -41,11 +63,27 @@ penalties ignore this argument, and \code{"segneigh"} falls back to
 Segment Neighbourhood. Note also that the default \code{"MBIC"} is
 resolved to a \emph{numeric} value for the numeric-penalty engines
 (\code{"fpop"}, \code{"cpop"}, \code{"decafs"}), and that value is
-stronger than those wrappers' own \code{2 * log(n)} default — 19.9
-against 11.8 at \eqn{n = 360} — so \code{cpt_detect(x, method =
+stronger than those wrappers' own \code{2 * log(n)} default (19.9
+against 11.8 at \eqn{n = 360}), so \code{cpt_detect(x, method =
 "decafs")} can report fewer changepoints than \code{decafs_wrapper(x)}
 on the same series. Pass \code{penalty} explicitly to make the two
 entry points agree.}
+
+\item{index}{Optional time index, one value per observation (dates, say).
+Detection still runs on observation positions (every wrapped engine
+assumes an equally spaced sequence), but the index is stored on the
+result and threaded through \code{tidy()} (as \code{cp_index}),
+\code{augment()}, \code{autoplot()} and \code{\link{cpt_report}()},
+so the output speaks in the user's own units. An index that is not
+equally spaced warns. When \code{x} is a data frame and \code{y} is
+given, \code{index} selects a column of that data frame instead of
+being a vector.}
+
+\item{y}{Column selection for the data-frame interface:
+\code{cpt_detect(df, y = value, index = date, method = "pelt")}. A bare
+column name, a string, or a column position. Only meaningful when
+\code{x} is a data frame; a data frame passed without \code{y} keeps
+its 0.4.0 meaning (one column per coordinate).}
 
 \item{...}{Additional arguments passed to the specific wrapper (see the
 wrapper's help page for engine-specific options). Where an argument is
@@ -55,12 +93,24 @@ also derived from \code{change_in} (\code{not}'s \code{contrast},
 supplied here takes precedence. Check the spelling against the wrapper's
 help page: several engines end their own signature in \code{...}
 (\pkg{wbs}, \pkg{not}, \pkg{Rbeast}, \pkg{strucchange},
-\pkg{segmented}, \pkg{fastcpd}), so for those a misspelt argument name
-is silently discarded upstream and the engine quietly uses its default
-rather than reporting the typo.}
+\pkg{segmented}, \pkg{fastcpd}, \pkg{fChange}, \pkg{bfast}), so for
+those a misspelt argument name is silently discarded upstream and the
+engine quietly uses its default rather than reporting the typo. Every
+other wired method rejects an unknown argument by name.}
 }
 \value{
-A \code{ggcpt} object.
+A \code{ggcpt} object: a list with \code{changepoints}
+  (\code{cp}, \code{cp_value}), \code{segments} (\code{seg_id},
+  \code{start}, \code{end}, \code{n}, \code{param_estimate}),
+  \code{data} (\code{index}, \code{value}), the \code{method},
+  \code{change_in}, \code{penalty}, \code{cp_convention} and
+  \code{runtime} that produced it, the matched \code{call}, and
+  \code{fit}, the raw upstream object. Optional slots
+  (\code{data_wide}, \code{regions}, \code{diagnostics}, ...) appear
+  only when an engine supplies them; \code{\link{new_ggcpt}()}
+  documents all of them, and \code{\link{tidy.ggcpt}()},
+  \code{\link{glance.ggcpt}()} and \code{\link{augment.ggcpt}()}
+  are the supported way to read one.
 }
 \description{
 Runs a changepoint detection method on a sequence and returns a tidy
@@ -76,10 +126,13 @@ compare a penalty against a \emph{raw} segment cost when
 noise standard deviation of 1, and \pkg{fpop}'s \code{lambda} is an
 absolute penalty on the residual sum of squares. Neither rescales the
 data, so on a series whose noise is much wider than 1 the penalty is
-effectively negligible and the segmentation shatters. On one true
-changepoint with a jump of five standard deviations, \code{"pelt"}
-returns 1 changepoint at \eqn{\sigma = 1}, 29 at \eqn{\sigma = 3} and
-138 at \eqn{\sigma = 10}. Three ways to avoid it, in order of
+effectively negligible and the segmentation shatters. On 200 observations
+with one true changepoint in the middle and a jump of five standard
+deviations, \code{"pelt"} returns 1 changepoint at \eqn{\sigma = 1}, 39
+at \eqn{\sigma = 3} and 141 at \eqn{\sigma = 10}. These are means over 20
+draws, because a single draw is not stable here: the same three settings
+gave 21/75 at \eqn{n = 100} and 57/266 at \eqn{n = 400}, so the effect
+grows with the series as well as with the noise. Three ways to avoid it, in order of
 convenience:
 \itemize{
   \item standardise the series first
@@ -89,10 +142,17 @@ convenience:
   \item use \code{change_in = "meanvar"}, which estimates a variance per
     segment and is unaffected.
 }
-The other engines are unaffected: SMUCE, WBS, WBS2, NOT, MOSUM,
-Isolate-Detect, TGUH, CPOP, DeCAFS and the Bayesian, nonparametric and
-multivariate methods all estimate or cancel the noise scale internally,
-and return the same segmentation whatever the units.
+Most other engines are unaffected: SMUCE, WBS, WBS2, NOT, MOSUM,
+Isolate-Detect, TGUH, CPOP, \code{"bcp"}, \code{"beast"} and the
+nonparametric and multivariate methods estimate or cancel the noise scale
+internally, and returned the same segmentation at a thousandth, one and
+a thousand times the units. Three did not, on the same series:
+\code{"geomcp"} runs PELT on its mapped distance and angle series and so
+inherits the sensitivity above; \code{"decafs"} floors its noise
+estimate at about 0.03, so it under-segments a series whose noise is
+smaller than that; and \code{"bocpd"}'s default prior is on the data's
+own scale. At a thousandth of the units the last two found nothing.
+Standardising first avoids all three.
 }
 
 \examples{
@@ -101,4 +161,21 @@ x <- c(rnorm(100, 0, 1), rnorm(100, 10, 1))
 result <- cpt_detect(x, method = "pelt", change_in = "mean")
 result
 ggplot2::autoplot(result)
+
+# A date index: detection is unchanged, but the report speaks in dates.
+dates <- as.Date("2000-01-01") + 0:199
+dated <- cpt_detect(x, method = "pelt", index = dates)
+tidy(dated)
+
+# The data-frame interface.
+df <- data.frame(day = dates, value = x)
+cpt_detect(df, y = value, index = day, method = "pelt")
+}
+\seealso{
+\code{\link{cpt_methods}()} for what is available and what each
+  method can do. To get the result out: \code{\link{tidy.ggcpt}()},
+  \code{\link{glance.ggcpt}()}, \code{\link{augment.ggcpt}()},
+  \code{\link{summary.ggcpt}()} and \code{\link{print.ggcpt}()}. To
+  draw it: \code{\link{autoplot.ggcpt}()}. For the penalty:
+  \code{\link{cpt_penalty}()}.
 }

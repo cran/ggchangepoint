@@ -7,10 +7,23 @@
 # length-n engine-fitted signal stored as a `fitted` column on `$data` and used
 # by `autoplot(show_fit = TRUE)` and `augment()`. `data_wide` is an optional
 # tibble (index + one column per coordinate) for multivariate input.
+#
+# 0.5.0 adds two more optional slots, both defaulted off and both following
+# the `data_wide` precedent (present only when an engine supplies them, and
+# tested for before use):
+#   `regions`     a tibble of significance regions (start, end, ...) for the
+#                 interval-valued methods -- NSP returns intervals that must
+#                 each contain a change, which is not a point estimate and
+#                 must not be squeezed into one.
+#   `diagnostics` a named list of engine internals (the detector statistic,
+#                 the solution path, a scale-space grid) that
+#                 ggcpt_statistic() / ggcpt_solution_path() /
+#                 ggcpt_scale_space() render.
 #' @noRd
 ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
                         fit = NULL, call = NULL, extra_cp_cols = NULL,
-                        fitted = NULL, data_wide = NULL) {
+                        fitted = NULL, data_wide = NULL, regions = NULL,
+                        diagnostics = NULL) {
   n <- length(data_vec)
   data_vec <- as.numeric(data_vec)
 
@@ -32,8 +45,27 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
   changepoints <- changepoints[order(changepoints$cp), , drop = FALSE]
 
   data_tbl <- tibble::tibble(index = seq_len(n), value = data_vec)
-  if (!is.null(fitted) && length(fitted) == n) {
-    data_tbl$fitted <- as.numeric(fitted)
+  # A wrong-length `fitted` used to be dropped without a word, after which
+  # autoplot(show_fit = TRUE) told the user the result "carries no fitted
+  # signal" -- about a signal the engine had computed. as_ggcpt() was
+  # changed this cycle to ERROR on the same mismatch, which is right for a
+  # slot the user filled in; here the signal comes from an engine, and
+  # failing the whole detection because its fitted vector came back short
+  # would turn a working analysis into no analysis. So warn and drop,
+  # naming the method and both lengths, which is the part that was missing.
+  # (Of the nine `fitted = TRUE` engines only bfast checked the length
+  # itself, and it does so by setting the signal to NULL, so it never
+  # reaches this branch.)
+  if (!is.null(fitted)) {
+    if (length(fitted) == n) {
+      data_tbl$fitted <- as.numeric(fitted)
+    } else {
+      warning("`", method, "` returned a fitted signal of length ",
+              length(fitted), " for a series of length ", n,
+              ", so it is dropped: `autoplot(show_fit = TRUE)` and ",
+              "`augment()` will report no fitted signal for this result.",
+              call. = FALSE)
+    }
   }
 
   if (nrow(changepoints) == 0) {
@@ -44,6 +76,8 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
     res$call <- call
     res$data <- data_tbl
     res$data_wide <- data_wide
+    res$regions <- normalise_regions(regions, n)
+    res$diagnostics <- diagnostics
     return(res)
   }
 
@@ -59,18 +93,267 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
     cp_convention = "left"
   )
   res$data_wide <- data_wide
+  res$regions <- normalise_regions(regions, n)
+  res$diagnostics <- diagnostics
+  warn_if_degenerate(res, method)
   res
+}
+
+# Internal: several engines refuse a short series from deep inside
+# themselves, in their own vocabulary -- two of them with their own typos.
+# Measured on a plain vector, the shortest length each accepts, and what it
+# says below that:
+#
+#   wbs          4   "sample size is too small"
+#   not          4   "max.length must satisfy 3 < max.lenght <= n"     [sic]
+#   wbsts        4   "subscript out of bounds"                   (base R's)
+#   taylor       5   "Invalid x argument. 'x' must be a numeric vector"
+#   envcpt      12   "Minimum segment legnth is too large to include a
+#                     change"                                          [sic]
+#   strucchange 15   "minimum segment size must be greater than the number
+#                     of regressors"
+#   bfast       25   "series is not periodic or has less than two periods"
+#
+# Not one names the method the caller asked for or the length they gave it,
+# and "subscript out of bounds" does not even say the series is the problem.
+# Three of the thresholds move with an argument -- `minseglen`, `h`,
+# `frequency` -- so a constant guard per wrapper would go stale against its
+# own engine. Translating keeps the engine's diagnosis, which is the
+# informative half, and adds the two things it never carried.
+SHORT_SERIES_PATTERNS <- paste(
+  "too small", "max\\.leng", "segment size", "segment legnth",
+  "segment length", "not periodic", "two periods",
+  "subscript out of bounds", "Invalid x argument",
+  # wbsts below 8 observations, where there are not two wavelet scales
+  "at least two scales",
+  sep = "|")
+
+#' @noRd
+rethrow_short_series <- function(e, method, n, hint = NULL) {
+  msg <- gsub("\\s+", " ", conditionMessage(e))
+  if (!grepl(SHORT_SERIES_PATTERNS, msg)) stop(e)
+  # Engine messages do not end in punctuation, so quote them and close the
+  # sentence -- otherwise the hint runs straight on from the engine's last
+  # word ("... less than two periods `bfast` needs at least ...").
+  msg <- sub("[.;:, ]+$", "", msg)
+  stop("Method `", method, "` could not segment a series of ", n,
+       " observation(s). The engine reported: \"", msg, "\".",
+       if (!is.null(hint)) paste0(" ", hint) else "", call. = FALSE)
+}
+
+#' @noRd
+engine_short_series <- function(expr, method, n, hint = NULL) {
+  tryCatch(expr, error = function(e) rethrow_short_series(e, method, n, hint))
+}
+
+# Internal: a segmentation in which every observation is its own segment is
+# not a segmentation, it is a failure to segment -- and several engines
+# produce exactly that on a series that is too short for them rather than
+# refusing it. Measured at n = 3: pelt, fpop, wbs2, tguh, smuce, decafs and
+# nsp all report a changepoint after every observation; at n = 5, wbs2,
+# decafs and nsp still do. The threshold is engine-specific, so a blanket
+# minimum in validate_data() would refuse calls that work; saying what
+# happened is the honest alternative to returning the number silently.
+#' @noRd
+warn_if_degenerate <- function(res, method) {
+  n <- nrow(res$data)
+  k <- nrow(res$changepoints)
+  if (n <= 2L || k != n - 1L) return(invisible(res))
+
+  # Two different situations produce it, and blaming the wrong one is worse
+  # than saying nothing: a zero penalty makes one segment per observation
+  # the *correct* unpenalised optimum (`penalty = "None"` on an fpop fit
+  # resolves to 0 and returns n - 1 changepoints on any length of series),
+  # whereas a positive penalty reaching the same place means the series is
+  # too short for the engine.
+  pen <- res$penalty$value
+  zero_penalty <- is.numeric(pen) && length(pen) == 1L &&
+    is.finite(pen) && pen == 0
+  warning("`", method, "` put a changepoint after every observation: ", k,
+          " changepoint(s) on ", n, " observation(s), so every segment is ",
+          "one point long. ",
+          if (zero_penalty) {
+            paste0("With a penalty of 0 that is the unpenalised optimum, ",
+                   "not a segmentation; give `penalty` a positive value.")
+          } else {
+            paste0("That is a failure to segment rather than a ",
+                   "segmentation: the series is too short for this engine.")
+          }, call. = FALSE)
+  invisible(res)
+}
+
+# Internal: normalise the optional `regions` slot to a tibble with integer
+# `start`/`end` clipped to the series, dropping anything unusable. Returns
+# NULL when there is nothing to store, so `is.null(res$regions)` stays the
+# test for "this engine does not do regions".
+#' @noRd
+normalise_regions <- function(regions, n) {
+  if (is.null(regions)) return(NULL)
+  if (is.matrix(regions)) {
+    if (ncol(regions) < 2L) {
+      stop("`regions` must have at least two columns (start, end).",
+           call. = FALSE)
+    }
+    cn <- colnames(regions)
+    regions <- tibble::as_tibble(as.data.frame(regions),
+                                 .name_repair = "minimal")
+    if (is.null(cn)) names(regions)[1:2] <- c("start", "end")
+  }
+  regions <- tibble::as_tibble(regions)
+  if (!all(c("start", "end") %in% names(regions))) {
+    if (ncol(regions) < 2L) {
+      stop("`regions` must have `start` and `end` columns.", call. = FALSE)
+    }
+    names(regions)[1:2] <- c("start", "end")
+  }
+  if (nrow(regions) == 0) {
+    regions$start <- integer(0)
+    regions$end <- integer(0)
+    return(regions)
+  }
+  # as.integer() again after the clip: pmin() against a double `n` would
+  # silently widen the columns back to double, and `cpt_regions()` derives
+  # `length` from them.
+  regions$start <- as.integer(pmax(1L, pmin(as.integer(round(regions$start)),
+                                            n)))
+  regions$end <- as.integer(pmax(1L, pmin(as.integer(round(regions$end)), n)))
+  # Drop the unusable rows BEFORE the flip below, not after it. A missing
+  # bound made `start > end` NA, so `if (any(flip))` stopped with base R's
+  # "missing value where TRUE/FALSE needed" when no other row was reversed,
+  # and "NAs are not allowed in subscripted assignments" when one was:
+  # `as_ggcpt(60, x, regions = data.frame(start = c(50, NA), end = c(70,
+  # 80)))` failed outright instead of keeping the one usable region.
+  keep <- !is.na(regions$start) & !is.na(regions$end)
+  regions <- regions[keep, , drop = FALSE]
+  # An interval given the other way round is a data-entry slip, not a
+  # different meaning; ordering it is what every plotting call assumes.
+  flip <- regions$start > regions$end
+  if (any(flip)) {
+    tmp <- regions$start[flip]
+    regions$start[flip] <- regions$end[flip]
+    regions$end[flip] <- tmp
+  }
+  regions[order(regions$start, regions$end), , drop = FALSE]
+}
+
+# Internal: leave the caller's search path as we found it. Two engines
+# mutate it. `fabisearch` needs NMF *attached* rather than loaded, and
+# attaching NMF brings its own Depends (Biobase, BiocGenerics) and its
+# foreach/doParallel/doRNG stack with it -- eight packages measured, where
+# the wrapper only ever detached NMF itself. `bcp::bcp()` calls
+# `require(bcp)` in its own body, so every call attaches `package:bcp` and
+# `package:grid` (bcp's Depends). Neither is something a detection call
+# should do to a user's session.
+#
+# Only what *this* call added is detached, so a package the user had already
+# attached is untouched, and `search()` lists the most recently attached
+# first, which is the order they have to go in.
+#
+# The attach also *speaks*: `require()` announces itself with
+# `packageStartupMessage()`, so a plain `bcp_wrapper()` call printed
+# "Loading required package: bcp" and "Loading required package: grid" on
+# stderr -- restoring the search path silently was not enough, because the
+# noise had already been emitted. Suppressing only package startup messages
+# leaves the engine's own `message()` and `warning()` output intact.
+#' @noRd
+with_search_path_restored <- function(expr) {
+  before <- search()
+  on.exit({
+    for (p in setdiff(search(), before)) {
+      try(detach(p, character.only = TRUE, unload = FALSE), silent = TRUE)
+    }
+  }, add = TRUE)
+  suppressPackageStartupMessages(force(expr))
+}
+
+# Internal: run `expr`, then give foreach's registered %dopar% backend back
+# as it was. kcpRS::kcpRS() calls registerDoParallel() on a cluster it then
+# stops, so after any `kcp` call every later %dopar% in the session failed
+# with "invalid connection" or waited on the dead socket: fabisearch's own
+# search did, from inside the test suite, and so would the caller's code.
+# foreach keeps the registration in `.foreachGlobals` (setDoPar() writes
+# `fun`, `data` and `info` there, and getDoParRegistered() asks whether
+# `fun` exists) and exports no getter for it, so it is saved and put back
+# there. Nothing is registered for the duration, so a call runs on
+# whatever the caller had.
+#' @noRd
+with_foreach_restored <- function(expr) {
+  globals <- function() {
+    if (!isNamespaceLoaded("foreach")) return(NULL)
+    ns <- asNamespace("foreach")
+    if (!exists(".foreachGlobals", envir = ns, inherits = FALSE)) return(NULL)
+    get(".foreachGlobals", envir = ns, inherits = FALSE)
+  }
+  fields <- c("fun", "data", "info")
+  g <- globals()
+  saved <- if (!is.null(g)) {
+    mget(fields[vapply(fields, exists, logical(1), envir = g,
+                       inherits = FALSE)], envir = g)
+  }
+  on.exit({
+    g <- globals()
+    if (!is.null(g)) {
+      rm(list = intersect(fields, ls(g, all.names = TRUE)), envir = g)
+      for (f in names(saved)) assign(f, saved[[f]], envir = g)
+    }
+  }, add = TRUE)
+  force(expr)
 }
 
 # Internal: check that an optional engine package is installed.
 #' @noRd
 need_pkg <- function(pkg) {
-  if (!requireNamespace(pkg, quietly = TRUE)) {
+  # Loading an engine's namespace can warn about the machine rather than the
+  # data: `mosum` reaches tcltk through plot3D and misc3d, so on any headless
+  # box -- a server, a container, a CI runner, a cluster node -- the first
+  # `cpt_scale_space()` call warns "no DISPLAY variable so Tk is not
+  # available". That is never actionable here, and a load that warns still
+  # succeeds; a load that fails returns FALSE and is reported below.
+  #
+  # It can also *message* about the library rather than the data. `bfast`
+  # pulls in `strucchangeRcpp`, which overwrites `strucchange`'s S3
+  # methods, so R announced the overwrite -- a table of method names on
+  # stderr -- on every `cpt_detect(x, method = "bfast")` call. Nothing the
+  # caller can act on: they did not ask for either package and cannot stop
+  # one shadowing the other. Measured for the thing that would matter if it
+  # were true: running bfast first does NOT change what `strucchange`
+  # answers. Before and after, the same changepoint at 60 and the same
+  # interval [59, 61] -- strucchangeRcpp is loaded but never attached, so
+  # this package's own use of strucchange is unaffected.
+  #
+  # Suppressed here and only here, because this function's job is to make
+  # the engine available; the fit runs afterwards, outside this call, so
+  # nothing an engine says about the data can be hidden by it.
+  if (!suppressMessages(suppressWarnings(
+        requireNamespace(pkg, quietly = TRUE)))) {
     stop("Package '", pkg, "' is required. ",
-         "Install it with install.packages('", pkg, "').",
+         "Install it with ", install_hint(pkg), ".",
          call. = FALSE)
   }
   invisible(TRUE)
+}
+
+# Internal: suggested engines that CRAN no longer serves, and the repository
+# that does. `fpop` was archived from CRAN on 2026-09-14 at its maintainer's
+# request and is still built on R-Forge, where it is developed. DESCRIPTION
+# declares the same repositories in `Additional_repositories`, which is what
+# CRAN policy asks of a suggested package outside the mainstream
+# repositories; a test keeps the two in agreement.
+#' @noRd
+engine_repos <- function() {
+  c(fpop = "https://R-Forge.R-project.org")
+}
+
+# Internal: the install.packages() call that fetches `pkg`, as text for an
+# error message. A bare install.packages('fpop') fails with "package 'fpop'
+# is not available", so the repository has to be part of the advice.
+#' @noRd
+install_hint <- function(pkg) {
+  repo <- engine_repos()[pkg]
+  if (is.na(repo)) {
+    return(paste0("install.packages('", pkg, "')"))
+  }
+  paste0("install.packages('", pkg, "', repos = '", repo, "')")
 }
 
 # Internal: coerce input for a univariate wrapper. Accepts vectors and
@@ -81,13 +364,32 @@ as_uni_vector <- function(x, method) {
   if (is.matrix(x) || is.data.frame(x)) {
     X <- as.matrix(x)
     if (ncol(X) > 1) {
+      # The tools that resample or re-fit one series (cpt_stability(),
+      # cpt_select(), cpt_sensitivity(), cpt_label_error_curve()) pass the
+      # detector the caller chose, which may well be multivariate -- and
+      # "Method `ecp` is univariate" then told them something false about
+      # the method rather than the true thing about the function.
+      reg <- full_registry()
+      mv <- isTRUE(reg$multivariate[match(method, reg$method)])
+      if (mv) {
+        stop("`x` has ", ncol(X), " columns, but this function works on a ",
+             "single series, even with `method = \"", method, "\"`, which ",
+             "is multivariate. Pass one column, or run the multivariate ",
+             "fit with cpt_detect() directly.", call. = FALSE)
+      }
       stop("Method `", method, "` is univariate, but `x` has ", ncol(X),
            " columns. See cpt_methods() for multivariate methods.",
            call. = FALSE)
     }
+    # A zero-column frame reaches `X[, 1]` and stops with base R's
+    # "subscript out of bounds", which names neither the argument nor this
+    # package.
+    if (ncol(X) == 0L) {
+      stop("`x` is empty: it has no columns to detect on.", call. = FALSE)
+    }
     return(as.numeric(X[, 1]))
   }
-  as.numeric(x)
+  coerce_series_values(x)
 }
 
 # Internal: TRUE when a series carries no variation at all. Exact equality
@@ -130,10 +432,20 @@ drop_constant_cols <- function(X, method) {
 # Internal: normalise multivariate input to a numeric matrix and build the
 # wide data tibble stored on the ggcpt object.
 #' @noRd
-as_mv_matrix <- function(x) {
+as_mv_matrix <- function(x, arg = "x") {
+  # as.matrix(NULL) stops with "'data' must be of a vector type, was 'NULL'",
+  # which says nothing about this package or which argument was empty. `arg`
+  # exists for the same reason: the caller's argument is often `baseline`,
+  # `new_obs` or `series` rather than `x`, and naming `x` sends the reader
+  # looking for an argument the function they called does not have.
+  if (is.null(x) || length(x) == 0L) {
+    stop("`", arg, "` is empty: a multivariate series needs at least one ",
+         "column with at least 3 observations.", call. = FALSE)
+  }
   X <- as.matrix(x)
   if (!is.numeric(X)) {
-    stop("`x` must be numeric.", call. = FALSE)
+    stop("`", arg, "` must be numeric.", nonnumeric_columns_note(x),
+         call. = FALSE)
   }
   if (is.null(colnames(X))) {
     colnames(X) <- paste0("V", seq_len(ncol(X)))

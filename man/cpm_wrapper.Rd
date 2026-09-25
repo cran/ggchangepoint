@@ -15,14 +15,18 @@ default), \code{"Mood"} (scale), \code{"Lepage"},
 \code{"Kolmogorov-Smirnov"}, \code{"Cramer-von-Mises"}. Parametric:
 \code{"Student"}, \code{"Bartlett"}, \code{"GLR"} (Gaussian),
 \code{"Exponential"} (positive data), \code{"FET"} (Fisher's exact test,
-for 0/1 Bernoulli data — this one also needs a \code{lambda} value passed
+for 0/1 Bernoulli data; this one also needs a \code{lambda} value passed
 through \code{...}, e.g. \code{lambda = 0.3}).}
 
 \item{arl0}{Target in-control average run length (how many observations,
 on average, before a false alarm). Defaults to \code{500}. \pkg{cpm}
-ships thresholds only for 100, 200, 370, 400, 500, 600, 700, 1000, 2000,
-5000, 10000 and 20000; any other value is refused, because the engine
-answers it by printing an error and reporting no changepoints.}
+ships thresholds only for a fixed grid (100, 200, 300, 370, 400, 500,
+600, 700, 800, 900, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000,
+9000, 10000, 20000, 30000, 40000 and 50000), and any other value is
+refused, because the engine answers it by printing an error and
+reporting no changepoints. The grid is the same for every
+\code{cpm_type}, and 50000 is the ceiling: a long series cannot be
+given an \code{arl0} proportional to its length indefinitely.}
 
 \item{startup}{Number of observations after each restart before monitoring
 begins. Defaults to \code{20}.}
@@ -52,3 +56,49 @@ res$changepoints
 \references{
 \insertRef{ross2015cpm}{ggchangepoint}
 }
+\seealso{
+Other changepoint engines: 
+\code{\link{bcp_wrapper}()},
+\code{\link{beast_wrapper}()},
+\code{\link{bfast_wrapper}()},
+\code{\link{binsegrcpp_wrapper}()},
+\code{\link{bocpd_wrapper}()},
+\code{\link{cpop_wrapper}()},
+\code{\link{cpt_wrapper}()},
+\code{\link{decafs_wrapper}()},
+\code{\link{ecp_wrapper}()},
+\code{\link{envcpt_wrapper}()},
+\code{\link{esac_wrapper}()},
+\code{\link{fabisearch_wrapper}()},
+\code{\link{fastcpd_wrapper}()},
+\code{\link{fcov_wrapper}()},
+\code{\link{fmean_wrapper}()},
+\code{\link{fpop_wrapper}()},
+\code{\link{geomcp_wrapper}()},
+\code{\link{hdcov_wrapper}()},
+\code{\link{hdreg_wrapper}()},
+\code{\link{idetect_wrapper}()},
+\code{\link{inspect_wrapper}()},
+\code{\link{kcp_wrapper}()},
+\code{\link{kwc_wrapper}()},
+\code{\link{mcp_wrapper}()},
+\code{\link{mosum_wrapper}()},
+\code{\link{network_wrapper}()},
+\code{\link{not_wrapper}()},
+\code{\link{npmojo_wrapper}()},
+\code{\link{nsp_wrapper}()},
+\code{\link{ocd_wrapper}()},
+\code{\link{pilliat_wrapper}()},
+\code{\link{segmented_wrapper}()},
+\code{\link{smuce_wrapper}()},
+\code{\link{sn_wrapper}()},
+\code{\link{strucchange_wrapper}()},
+\code{\link{taylor_wrapper}()},
+\code{\link{tguh_wrapper}()},
+\code{\link{trend_wrapper}()},
+\code{\link{var_wrapper}()},
+\code{\link{wbs2_wrapper}()},
+\code{\link{wbs_wrapper}()},
+\code{\link{wbsts_wrapper}()}
+}
+\concept{changepoint engines}
