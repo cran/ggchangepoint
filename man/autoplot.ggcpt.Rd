@@ -18,7 +18,8 @@
   show_line = TRUE,
   index = NULL,
   labels = NULL,
-  type = c("series", "statistic", "path", "scale_space"),
+  type = c("series", "statistic", "path", "scale_space", "diagnostics", "counterfactual",
+    "attribution"),
   ...
 )
 }
@@ -42,16 +43,18 @@ near the bottom of the panel. Defaults to \code{FALSE}.}
 \item{show_fit}{Logical. Whether to draw the engine's fitted signal (the
 \code{fitted} column of \code{$data}, provided by the engines
 \code{\link{cpt_methods}()} marks in its \code{fitted} column:
-\code{smuce}, \code{hsmuce}, \code{cpop}, \code{bcp}, \code{beast},
-\code{decafs}, \code{segmented}, \code{mcp} and \code{bfast}). Defaults to
-\code{FALSE}.}
+\code{smuce}, \code{hsmuce}, \code{cpop}, \code{bcp}, \code{bocpd}
+(a causal running mean), \code{beast}, \code{decafs},
+\code{segmented}, \code{envcpt}, \code{mcp} and \code{bfast}, plus
+every formula fit). Defaults to \code{FALSE}.}
 
-\item{show_regions}{Logical. Whether to shade the significance regions an
-interval-valued method returns (the \code{regions} slot; currently
-\code{\link{nsp_wrapper}()}). Each band is an interval that contains at
-least one changepoint at the stated global level; it is not a confidence
-interval around a point estimate. Defaults to \code{TRUE} when the
-result carries regions, and is ignored otherwise.}
+\item{show_regions}{Logical. Whether to draw the \code{regions} slot:
+the significance regions of \code{\link{nsp_wrapper}()} (each band
+contains at least one changepoint at the stated global level; it is
+not a confidence interval around a point estimate) or the anomalies of
+\code{\link{capa_wrapper}()} (collective anomalies shaded, point
+anomalies ringed). Defaults to \code{TRUE} when the result carries
+regions, and is ignored otherwise.}
 
 \item{cptline_alpha}{Alpha for changepoint lines. Defaults to \code{1}.}
 
@@ -84,7 +87,16 @@ to \code{\link{ggcpt_statistic}()} and
 supporting engines when this one does not expose the internals.
 \code{"scale_space"} delegates to \code{\link{ggcpt_scale_space}()},
 which needs nothing from the engine: it sweeps a multiscale detector
-over the same series, so it draws for any result.}
+over the same series, so it draws for any result. \code{"diagnostics"}
+is the residual check of the fit in four panels: the residuals with the
+segment boundaries (structure left behind), their autocorrelation per
+segment (the independence most engines assume), a normal Q-Q plot per
+segment (the Gaussian cost) and the spread of each segment (a constant
+variance); \code{\link{cpt_gof}()} gives the same checks as numbers.
+\code{"counterfactual"} draws the series against the segment before
+each change carried forward (\code{\link{cpt_counterfactual}()}), and
+\code{"attribution"} the coordinates certified to have changed at each
+changepoint of a multivariate result (\code{\link{cpt_attribute}()}).}
 
 \item{...}{Unknown arguments are ignored with a warning, except when
 \code{type} is not \code{"series"}, in which case they are passed to
@@ -100,6 +112,16 @@ and (optionally) fitted segment levels, the engine's fitted signal, and
 changepoint-location confidence intervals are overlaid. Multivariate
 results (from \code{ecp}, \code{inspect}, \code{geomcp}, ...) are drawn as
 faceted small-multiples with shared changepoint rules.
+}
+\examples{
+set.seed(2026)
+fit <- cpt_detect(c(rnorm(60), rnorm(60, 3), rnorm(60)), method = "pelt")
+ggplot2::autoplot(fit)
+ggplot2::autoplot(fit, type = "diagnostics")
+
+# a dated series draws its dates
+dated <- cpt_detect(Nile, method = "pelt", change_in = "meanvar")
+ggplot2::autoplot(dated)
 }
 \seealso{
 \code{\link{ggcpt_plot_methods}} for the base \code{plot()}

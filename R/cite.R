@@ -28,9 +28,9 @@ cpt_cite <- function(x) {
     # surfaces as tibble's "Can't subset rows with ..." rather than saying
     # what is wrong.
     if (length(method) != 1L || is.na(method) || !nzchar(method)) {
-      stop("`x` must be a method name, or a ggcpt object whose `method` is ",
-           "set. Call cpt_cite() with no argument for the full table.",
-           call. = FALSE)
+      cpt_abort("`x` must be a method name, or a ggcpt object whose `method` ",
+                 "is ", "set. Call cpt_cite() with no argument for the full ",
+                 "table.", class = "bad_argument")
     }
     # The registry is an environment, so its lookup is CASE-SENSITIVE, and
     # cpt_register_method() stores the name verbatim. Lowercasing first
@@ -58,12 +58,12 @@ cpt_cite <- function(x) {
           )
         )
       } else {
-        stop("No reference recorded for method '", method, "'. ",
-             "Call cpt_cite() with no argument for the full table. If this ",
-             "result came from as_ggcpt() or an external detector, the ",
-             "citation is yours to supply: register the detector with ",
-             "cpt_register_method(citation = ...), or cite it directly.",
-             call. = FALSE)
+        cpt_abort("No reference recorded for method '", method, "'. ",
+                  "Call cpt_cite() with no argument for the full table. If this ",
+                  "result came from as_ggcpt() or an external detector, the ",
+                  "citation is yours to supply: register the detector with ",
+                  "cpt_register_method(citation = ...), or cite it directly.",
+                  class = "capability_absent")
       }
     }
   }
@@ -133,6 +133,9 @@ cpt_references <- function() {
     "taylor", "Taylor, W. A. (2000). Change-Point Analysis: A Powerful New Tool for Detecting Changes. Taylor Enterprises, Libertyville, Illinois.",
     "binsegrcpp", "Hocking, T. D. (2024). Finite sample complexity analysis of binary segmentation. arXiv:2410.08654.",
 
+    # ---- 0.7.0 ---------------------------------------------------------------
+    "capa", "Fisch, A. T. M., Eckley, I. A. and Fearnhead, P. (2022). A linear time method for the detection of collective and point anomalies. Statistical Analysis and Data Mining, 15(4), 494-508. For a multivariate series: Fisch, A. T. M., Eckley, I. A. and Fearnhead, P. (2022). Subset multivariate collective and point anomaly detection. Journal of Computational and Graphical Statistics, 31(2), 574-585.",
+
     # ---- tools that are methods in their own right -------------------------
     "copps", "Zou, C., Wang, G. and Li, R. (2020). Consistent selection of the number of change-points via sample-splitting. Annals of Statistics, 48(1), 413-439.",
     "mbic", "Zhang, N. R. and Siegmund, D. O. (2007). A modified Bayes information criterion with applications to the analysis of comparative genomic hybridization data. Biometrics, 63(1), 22-32.",
@@ -140,6 +143,8 @@ cpt_references <- function() {
     "penalty_learning", "Hocking, T. D., Rigaill, G., Vert, J.-P. and Bach, F. (2013). Learning sparse penalties for change-point detection using max margin interval regression. Proceedings of the 30th International Conference on Machine Learning, 28, 172-180.",
     "edetector", "Shin, J., Ramdas, A. and Rinaldo, A. (2023). E-detectors: a nonparametric framework for sequential change detection. The New England Journal of Statistics in Data Science, 1(2), 229-260. (Implemented natively in ggchangepoint; every other method here wraps a separately maintained package.)",
     "benchmark", "van den Burg, G. J. J. and Williams, C. K. I. (2020). An evaluation of change point detection algorithms. arXiv:2003.06222.",
-    "critical_difference", "Demsar, J. (2006). Statistical comparisons of classifiers over multiple data sets. Journal of Machine Learning Research, 7, 1-30."
+    "critical_difference", "Demsar, J. (2006). Statistical comparisons of classifiers over multiple data sets. Journal of Machine Learning Research, 7, 1-30.",
+    "attribution", "Peng, C., Wu, M., Yan, Q., Chen, D. and Shen, Z. (2026). ARM: Detector-agnostic changepoint attribution with finite-sample error control. arXiv:2608.01691.",
+    "conformal", "Hore, R. and Ramdas, A. (2026). Conformal changepoint localization. arXiv:2602.06267."
   )
 }

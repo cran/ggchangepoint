@@ -9,10 +9,10 @@
 #' (\code{geom_changepoint()}, \code{geom_cpt_segment()},
 #' \code{geom_cpt_ci()}, \code{geom_cpt_region()}, \code{geom_cpt_label()},
 #' \code{geom_cpt_event()}, \code{stat_changepoint()}), and a unified
-#' dispatcher \code{cpt_detect()} that reaches fifty methods.
+#' dispatcher \code{cpt_detect()} that reaches 51 methods.
 #'
 #' \strong{Detection engines.} \code{cpt_detect()} dispatches to the methods in
-#' \code{cpt_methods()}, across nine families:
+#' \code{cpt_methods()}, across ten families:
 #' \itemize{
 #'   \item \strong{Penalised/optimal:} PELT, BinSeg, SegNeigh, AMOC
 #'     (\pkg{changepoint}); FPOP (\pkg{fpop}); fast binary segmentation
@@ -48,6 +48,9 @@
 #'     breaks (\pkg{bfast}).
 #'   \item \strong{Classical single-change tests:} Pettitt, Buishand and
 #'     SNHT (\pkg{trend}), Taylor's analyzer (\pkg{ChangePointTaylor}).
+#'   \item \strong{Epidemic changes and anomalies:} collective and point
+#'     anomalies against a baseline, for one series or many (\pkg{anomaly}'s
+#'     CAPA).
 #' }
 #'
 #' \strong{What surrounds the detectors.} Every detector returns a \code{ggcpt}
@@ -55,11 +58,26 @@
 #' carrying a time index, engine confidence intervals, a fitted signal,
 #' significance regions and diagnostics. Around that:
 #' \itemize{
-#'   \item \strong{Inference:} \code{cpt_confint()} (four provenances, one
-#'     contract), \code{cpt_test()}, \code{cpt_regions()}.
+#'   \item \strong{What to fit:} \code{cpt_families()} (Poisson, binomial,
+#'     exponential and other costs), a formula for a regression break
+#'     (\code{cpt_detect(y ~ x, data)}), and \code{cpt_segment_models()} and
+#'     \code{predict()} for a model per regime.
+#'   \item \strong{How big, when, and whether at all:} \code{cpt_effect()},
+#'     \code{cpt_test_at()} (a date fixed in advance),
+#'     \code{cpt_attribute_event()}, \code{cpt_test_null()},
+#'     \code{cpt_null_power()}.
+#'   \item \strong{Should I believe it:} \code{cpt_assumptions()},
+#'     \code{cpt_gof()}, \code{cpt_robustness()}, \code{cpt_verify()}.
+#'   \item \strong{Inference:} \code{cpt_confint()} (five provenances, one
+#'     contract, including distribution-free conformal sets) and
+#'     \code{cpt_confint_coverage()}, \code{cpt_test()}, \code{cpt_regions()},
+#'     \code{cpt_attribute()} (which coordinates changed), \code{cpt_screen()}
+#'     (which of many series changed).
+#'   \item \strong{What would have happened, and how:}
+#'     \code{cpt_counterfactual()}, \code{cpt_abruptness()}.
 #'   \item \strong{Choosing K:} \code{cpt_select()} (BIC, Zhang-Siegmund
 #'     mBIC, AIC, CROPS elbow, cross-validation, stability),
-#'     \code{cpt_crops()}, \code{cpt_penalty()}.
+#'     \code{cpt_k_weights()}, \code{cpt_crops()}, \code{cpt_penalty()}.
 #'   \item \strong{Diagnostics:} \code{cpt_influence()}, \code{cpt_leverage()},
 #'     \code{cpt_sensitivity()}, \code{cpt_stability()},
 #'     \code{cpt_statistic()}, \code{cpt_solution_path()},
@@ -72,7 +90,8 @@
 #'   \item \strong{Evaluation:} \code{cpt_metrics()},
 #'     \code{cpt_metrics_annotated()}, \code{cpt_benchmark()},
 #'     \code{cpt_datasets()}, \code{cpt_load_tcpd()}.
-#'   \item \strong{Streaming:} \code{cpt_monitor()}, \code{cpt_update()},
+#'   \item \strong{Streaming:} \code{cpt_monitor()} (e-detector, CUSUM and
+#'     EWMA control charts, \pkg{cpm}, \pkg{ocd}), \code{cpt_update()},
 #'     \code{alarms()}, \code{cpt_replay()}, \code{cpt_delay()}.
 #'   \item \strong{Study design:} \code{cpt_simulate()}, \code{cpt_power()},
 #'     \code{cpt_min_detectable()}, \code{cpt_scenarios()}.
@@ -82,16 +101,33 @@
 #'   \item \strong{Extension:} \code{as_ggcpt()} and
 #'     \code{cpt_register_method()} bring detectors this package does not and
 #'     cannot depend on into the same grammar.
+#'   \item \strong{Leaving R:} \code{as_json()}, \code{cpt_export()},
+#'     \code{cpt_import()}.
+#'   \item \strong{Measurements:} \code{cpt_runtimes},
+#'     \code{cpt_invariances}, \code{cpt_noise_benchmark},
+#'     \code{cpt_data_types}, \code{cpt_null_sizes},
+#'     \code{cpt_calibration}.
 #' }
+#'
+#' Every condition the package raises is classed; see
+#' \link{ggchangepoint-conditions}.
 #'
 #' @seealso The entry points, by group:
 #'   \itemize{
 #'     \item \strong{Detect:} \code{\link{cpt_detect}()},
-#'       \code{\link{cpt_methods}()}, \code{\link{cpt_register_method}()}.
+#'       \code{\link{cpt_methods}()}, \code{\link{cpt_families}()},
+#'       \code{\link{cpt_register_method}()}.
+#'     \item \strong{After detection:} \code{\link{cpt_effect}()},
+#'       \code{\link{cpt_test_at}()}, \code{\link{cpt_assumptions}()},
+#'       \code{\link{cpt_robustness}()}.
 #'     \item \strong{Visualise:} \code{\link{autoplot.ggcpt}()},
 #'       \code{\link{ggcptplot}()}, \code{\link{ggcpt_compare}()}.
 #'     \item \strong{Inference and selection:} \code{\link{cpt_confint}()},
-#'       \code{\link{cpt_test}()}, \code{\link{cpt_select}()}.
+#'       \code{\link{cpt_test}()}, \code{\link{cpt_attribute}()},
+#'       \code{\link{cpt_screen}()}, \code{\link{cpt_select}()},
+#'       \code{\link{cpt_k_weights}()}.
+#'     \item \strong{What if:} \code{\link{cpt_counterfactual}()},
+#'       \code{\link{cpt_abruptness}()}.
 #'     \item \strong{Choosing and combining methods:}
 #'       \code{\link{cpt_consensus}()}, \code{\link{cpt_recommend}()},
 #'       \code{\link{cpt_benchmark}()}.
@@ -137,7 +173,16 @@ if (getRversion() >= "2.15.1") {
     "detected", "jump", "power", "lower", "upper", "truth", "ci",
     "scale_space", "path", ".at",
     # cpt_power()'s autoplot() maps the series length `n`
-    "n"
+    "n",
+    # 0.6.0: effects, assumptions, recommendation and diagnostics
+    "delta", "delta_lower", "delta_upper", ".label", "a", "b", "segment",
+    "score", "tie_group", "flag", "setting",
+    # 0.6.0: geom_changepoint()'s geom_vline()-style shorthand
+    "xintercept",
+    # 0.7.0: attribution, coverage, counterfactuals, control charts and
+    # screening
+    "evidence", "counterfactual", ".change", "route", "coverage", "p_value",
+    "line", "probability", "weight"
   ))
 }
 
@@ -155,12 +200,12 @@ ggcptplot_internal <- function(data, result,
 
   extra <- list(...)
   if (length(extra) > 0) {
-    warning("Ignoring unknown argument(s): ",
-            paste(names(extra), collapse = ", "), call. = FALSE)
+    cpt_warn("Ignoring unknown argument(s): ",
+             paste(names(extra), collapse = ", "), class = "argument_ignored")
   }
 
   if (length(data) == 0) {
-    stop("Cannot plot an empty series.", call. = FALSE)
+    cpt_abort("Cannot plot an empty series.", class = "bad_argument")
   }
   validate_flag(show_points, "show_points")
   validate_flag(show_line, "show_line")
@@ -240,9 +285,10 @@ validate_scalar <- function(value, name, min = -Inf, max = Inf,
     lo <- if (is.finite(min)) paste0(if (min_open) "greater than " else "at least ", min)
     hi <- if (is.finite(max)) paste0(if (max_open) "less than " else "at most ", max)
     rng <- paste(Filter(Negate(is.null), list(lo, hi)), collapse = " and ")
-    stop("`", name, "` must be a single finite number",
-         if (nzchar(rng)) paste0(", ", rng), " (got ",
-         paste(format(value), collapse = ", "), ").", call. = FALSE)
+    cpt_abort("`", name, "` must be a single finite number",
+              if (nzchar(rng)) paste0(", ", rng), " (got ",
+              paste(format(value), collapse = ", "), ").",
+              class = "bad_argument")
   }
   invisible(TRUE)
 }
@@ -255,12 +301,13 @@ validate_grid <- function(value, name, min = -Inf, min_open = FALSE) {
   ok <- is.numeric(value) && length(value) >= 1L && all(is.finite(value)) &&
     all(if (min_open) value > min else value >= min)
   if (!ok) {
-    stop("`", name, "` must be one or more finite numbers",
-         if (is.finite(min)) {
-           paste0(", each ", if (min_open) "greater than " else "at least ",
-                  min)
-         },
-         " (got ", paste(format(value), collapse = ", "), ").", call. = FALSE)
+    cpt_abort("`", name, "` must be one or more finite numbers",
+              if (is.finite(min)) {
+                paste0(", each ", if (min_open) "greater than " else "at least ",
+                       min)
+              },
+              " (got ", paste(format(value), collapse = ", "), ").",
+              class = "bad_argument")
   }
   invisible(TRUE)
 }
@@ -273,9 +320,10 @@ validate_grid <- function(value, name, min = -Inf, min_open = FALSE) {
 validate_flag <- function(value, name, allow_null = FALSE) {
   if (allow_null && is.null(value)) return(invisible(TRUE))
   if (!is.logical(value) || length(value) != 1L || is.na(value)) {
-    stop("`", name, "` must be TRUE or FALSE",
-         if (allow_null) " (or NULL)", " (got ",
-         paste(format(value), collapse = ", "), ").", call. = FALSE)
+    cpt_abort("`", name, "` must be TRUE or FALSE",
+              if (allow_null) " (or NULL)", " (got ",
+              paste(format(value), collapse = ", "), ").",
+              class = "bad_argument")
   }
   invisible(TRUE)
 }
@@ -318,6 +366,14 @@ validate_flag <- function(value, name, allow_null = FALSE) {
 #' @noRd
 local_seed <- function(seed, envir = parent.frame()) {
   if (is.null(seed)) return(invisible(FALSE))
+  # Every seeded tool arrives here, and `seed = "a"` or `NA` reached
+  # set.seed() as base R's unclassed "supplied seed is not a valid integer".
+  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
+    shown <- if (length(seed)) paste(trimws(utils::head(format(seed), 3)),
+                                     collapse = ", ") else "a zero-length value"
+    cpt_abort("`seed` must be a single finite number, or NULL for no seed; ",
+              "got ", shown, ".", class = "bad_argument")
+  }
   g <- globalenv()
   # A fresh session has no `.Random.seed` until the first draw, and leaving
   # one behind would itself be a change to the caller's state.
@@ -355,10 +411,11 @@ local_seed <- function(seed, envir = parent.frame()) {
 reject_managed_args <- function(dots, method, managed) {
   clash <- intersect(names(dots), names(managed))
   if (length(clash) == 0L) return(invisible(TRUE))
-  stop("`", method, "` sets `", clash[1], "` itself, so it cannot be ",
-       "supplied through `...`: ", managed[[clash[1]]],
-       if (length(clash) > 1) paste0(" (same for `",
-         paste(clash[-1], collapse = "`, `"), "`.)"), call. = FALSE)
+  cpt_abort("`", method, "` sets `", clash[1], "` itself, so it cannot be ",
+            "supplied through `...`: ", managed[[clash[1]]],
+            if (length(clash) > 1) paste0(" (same for `",
+              paste(clash[-1], collapse = "`, `"), "`.)"),
+            class = "bad_argument")
 }
 
 # Internal: the engine argument names this package renames, and what to use
@@ -392,7 +449,7 @@ renamed_engine_args <- function(method) {
     sn           = c(ts = NA_character_, paras_to_test = "parameter"),
     ocd          = c(dim = NA_character_, MC_reps = "mc_reps"),
     strucchange  = c(formula = NA_character_),
-    segmented    = c(seg.Z = NA_character_),
+    segmented    = c(seg.Z = "seg_z"),
     fabisearch   = c(mindist = "min_dist", nruns = "n_runs",
                      nreps = "n_reps", ncore = "n_core"),
     bfast        = c(max.iter = "max_iter"),
@@ -417,15 +474,15 @@ reject_renamed_args <- function(dots, method, label = method) {
   if (length(clash) == 0L) return(invisible(TRUE))
   a <- clash[1]
   use <- map[[a]]
-  stop("`", label, "` ", if (is.na(use)) "derives" else "renames",
-       " its engine's `", a, "` argument, so passing it through `...` ",
-       "collides with the value this package already supplies. ",
-       if (is.na(use)) {
-         paste0("`", a, "` comes from `x` and is not yours to set.")
-       } else {
-         paste0("Use `", use, "` instead.")
-       },
-       call. = FALSE)
+  cpt_abort("`", label, "` ", if (is.na(use)) "derives" else "renames",
+            " its engine's `", a, "` argument, so passing it through `...` ",
+            "collides with the value this package already supplies. ",
+            if (is.na(use)) {
+              paste0("`", a, "` comes from `x` and is not yours to set.")
+            } else {
+              paste0("Use `", use, "` instead.")
+            },
+            class = "bad_argument")
 }
 
 # Internal: a user-supplied `index` labels the x axis, so it must line up
@@ -436,9 +493,9 @@ reject_renamed_args <- function(dots, method, label = method) {
 validate_index <- function(index, n) {
   if (is.null(index)) return(invisible(TRUE))
   if (length(index) != n) {
-    stop("`index` must have one value per observation: the series has ", n,
-         " observation(s) but `index` has ", length(index), ".",
-         call. = FALSE)
+    cpt_abort("`index` must have one value per observation: the series has ", n,
+              " observation(s) but `index` has ", length(index), ".",
+              class = "bad_argument")
   }
   invisible(TRUE)
 }
@@ -464,10 +521,11 @@ nonnumeric_columns_note <- function(x) {
 # column is exempt -- there is no join for anything to be invented at.
 reject_multicolumn <- function(x, arg = "x", hint = "") {
   if ((is.matrix(x) || is.data.frame(x)) && ncol(x) != 1L) {
-    stop("`", arg, "` is a ", class(x)[1], " with ", ncol(x),
-         " columns, but this takes a single series. Concatenating the ",
-         "columns would invent a changepoint at each join.",
-         if (nzchar(hint)) paste0(" ", hint) else "", call. = FALSE)
+    cpt_abort("`", arg, "` is a ", class(x)[1], " with ", ncol(x),
+              " columns, but this takes a single series. Concatenating the ",
+              "columns would invent a changepoint at each join.",
+              if (nzchar(hint)) paste0(" ", hint) else "",
+              class = "wrong_dimension")
   }
   invisible(TRUE)
 }
@@ -477,43 +535,100 @@ reject_multicolumn <- function(x, arg = "x", hint = "") {
 # one stray NA slipped into a 10,000-point series or half of it is missing.
 # Those are different problems with different fixes, so the count travels
 # with the message, from one definition rather than seven copies.
-stop_nonfinite <- function(x, arg = "x") {
-  stop("`", arg, "` must be finite (no NA/NaN/Inf); ", sum(!is.finite(x)),
-       " of ", length(x), " values are not.", call. = FALSE)
+stop_nonfinite <- function(x, arg = "x", hint = na_action_hint(x)) {
+  cpt_abort("`", arg, "` must be finite (no NA/NaN/Inf); ", sum(!is.finite(x)),
+            " of ", length(x), " values are not.", hint,
+            class = "non_finite",
+            data = list(n_missing = sum(is.na(x)),
+                        n_infinite = sum(is.infinite(x))))
 }
 
-# Validate input data
+# Internal: the fix for missing values, named in the refusal. An infinite
+# value has no such fix, so the hint appears only when every non-finite
+# value is a missing one.
+#' @noRd
+na_action_hint <- function(x) {
+  if (!anyNA(x) || any(is.infinite(x))) return("")
+  paste0(" To detect around the gaps, pass `na_action = \"omit\"` to ",
+         "cpt_detect() (or through the `...` of a tool that calls it): it ",
+         "drops them, detects, and reports locations in the original ",
+         "positions.")
+}
+
+# Internal: the same fix for a stream. The monitors cannot place a gap, and
+# the general hint sent them to cpt_detect(na_action = "omit").
+#' @noRd
+stream_na_hint <- function(x) {
+  if (!anyNA(x) || any(is.infinite(x))) return("")
+  paste0(" A monitor reads the stream in order and cannot hold a gap: leave ",
+         "a missing observation out rather than passing it.")
+}
+
+# Internal: the finite check, relaxed to "no infinities and enough observed
+# values" while with_na_allowed() is in force.
+#' @noRd
+check_finite <- function(x) {
+  if (na_allowed()) {
+    if (any(is.infinite(x)) || any(is.nan(x) & !is.na(x))) stop_nonfinite(x)
+    if (sum(!is.na(x)) < 3) {
+      cpt_abort("`x` has ", sum(!is.na(x)), " observed value(s); at least 3 ",
+                "are needed.", class = "short_series",
+                data = list(n = sum(!is.na(x))))
+    }
+    return(invisible(TRUE))
+  }
+  if (anyNA(x) || any(!is.finite(x))) stop_nonfinite(x)
+  invisible(TRUE)
+}
+
+# Validate input data. Inside `cpt_detect(na_action = "engine")` a missing
+# value is allowed through to the engines that handle one (see
+# with_na_allowed()); an infinite value never is.
 validate_data <- function(x) {
+  refuse_special_values(x)
   if (is.data.frame(x) || is.matrix(x)) {
     x_num <- as.matrix(x)
     if (!is.numeric(x_num)) {
-      stop("`x` must be numeric.", nonnumeric_columns_note(x), call. = FALSE)
+      cpt_abort("`x` must be numeric.", nonnumeric_columns_note(x),
+                class = "bad_type")
     }
-    if (anyNA(x_num) || any(!is.finite(x_num))) {
-      stop_nonfinite(x_num)
-    }
+    check_finite(x_num)
     if (nrow(x_num) < 3) {
-      stop("`x` must have at least 3 observations.", call. = FALSE)
+      cpt_abort("`x` must have at least 3 observations.",
+                class = "short_series", data = list(n = nrow(x_num)))
     }
   } else if (is.numeric(x) || is.logical(x)) {
     # A logical series is a legitimate 0/1 series, and cpt_detect() already
     # coerces one before it gets here; accepting it makes the tools that
     # validate first agree with the tools that coerce first.
     x <- as.numeric(x)
-    if (anyNA(x) || any(!is.finite(x))) {
-      stop_nonfinite(x)
-    }
+    check_finite(x)
     if (length(x) < 3) {
-      stop("`x` must have at least 3 observations.", call. = FALSE)
+      cpt_abort("`x` must have at least 3 observations.",
+                class = "short_series", data = list(n = length(x)))
     }
   } else {
     # Not a series at all. coerce_series_values() names the specific trap --
     # a factor's level codes, character input -- and rejects anything else
     # with the general message; the stop() below is only a backstop.
     coerce_series_values(x)
-    stop("`x` must be a numeric vector, matrix, or data.frame.", call. = FALSE)
+    cpt_abort("`x` must be a numeric vector, matrix, or data.frame.",
+              class = "bad_type")
   }
   invisible(TRUE)
+}
+
+# Internal: validate a series that a tool hands to cpt_detect() along with
+# the caller's `...`. When those ask for `na_action = "omit"` or
+# `"engine"`, the gaps are cpt_detect()'s to handle, and refusing them up
+# front made the argument unreachable through cpt_consensus(),
+# ggcpt_compare() and the other tools that run several fits.
+#' @noRd
+validate_for_detect <- function(x, dots) {
+  na <- dots[["na_action", exact = TRUE]]
+  gaps_ok <- is.character(na) && length(na) == 1L && !is.na(na) &&
+    !is.na(pmatch(na, c("omit", "engine")))
+  if (gaps_ok) with_na_allowed(validate_data(x)) else validate_data(x)
 }
 
 # Internal: user-supplied changepoint LOCATIONS, wherever they arrive --
@@ -530,35 +645,38 @@ validate_data <- function(x) {
 as_cp_locations <- function(x, arg = "cp", sort = FALSE) {
   if (is.null(x)) return(integer(0))
   if (is_ggcpt(x)) {
-    stop("`", arg, "` takes changepoint indices, not a `ggcpt` object. ",
-         "Pass the locations instead, e.g. `fit$changepoints$cp` or ",
-         "`tidy(fit)$cp`.", call. = FALSE)
+    cpt_abort("`", arg, "` takes changepoint indices, not a `ggcpt` object. ",
+              "Pass the locations instead, e.g. `fit$changepoints$cp` or ",
+              "`tidy(fit)$cp`.", class = "bad_type")
   }
   if (is.data.frame(x)) {
     if ("cp" %in% names(x)) {
-      stop("`", arg, "` takes changepoint indices, not a table. Pass the ",
-           "column, e.g. `", arg, "$cp`.", call. = FALSE)
+      cpt_abort("`", arg, "` takes changepoint indices, not a table. Pass the ",
+                "column, e.g. `", arg, "$cp`.", class = "bad_type")
     }
-    stop("`", arg, "` takes changepoint indices, not a table.", call. = FALSE)
+    cpt_abort("`", arg, "` takes changepoint indices, not a table.",
+              class = "bad_type")
   }
   if (is.factor(x)) {
-    stop("`", arg, "` is a factor. Coercing a factor gives its level codes ",
-         "(alphabetical positions), not the locations. Convert it first, ",
-         "e.g. as.integer(as.character(", arg, ")).", call. = FALSE)
+    cpt_abort("`", arg, "` is a factor. Coercing a factor gives its level ",
+               "codes ", "(alphabetical positions), not the locations. ",
+               "Convert it first, ", "e.g. as.integer(as.character(", arg,
+              ")).", class = "bad_type")
   }
   if (is.logical(x)) {
-    stop("`", arg, "` is logical. Changepoint locations are positions, not ",
-         "a mask over the series; pass which(", arg, ").", call. = FALSE)
+    cpt_abort("`", arg, "` is logical. Changepoint locations are positions, ",
+               "not ", "a mask over the series; pass which(", arg, ").",
+              class = "bad_type")
   }
   was_na <- is.na(x)
   out <- suppressWarnings(as.integer(x))
   invented <- is.na(out) & !was_na
   if (any(invented)) {
     bad <- unique(as.character(x)[invented])
-    stop("`", arg, "` must be changepoint locations; ", sum(invented),
-         " value(s) are not numbers: ",
-         paste0("\"", utils::head(bad, 5), "\"", collapse = ", "), ".",
-         call. = FALSE)
+    cpt_abort("`", arg, "` must be changepoint locations; ", sum(invented),
+              " value(s) are not numbers: ",
+              paste0("\"", utils::head(bad, 5), "\"", collapse = ", "), ".",
+              class = "bad_type")
   }
   if (isTRUE(sort)) sort(unique(out)) else out
 }
@@ -571,16 +689,18 @@ as_cp_locations <- function(x, arg = "cp", sort = FALSE) {
 # which validate_data() blames non-finite data rather than the text.
 #' @noRd
 coerce_series_values <- function(x, arg = "x") {
+  refuse_special_values(x, arg)
   if (is.factor(x)) {
-    stop("`", arg, "` is a factor. Detection needs numbers, and coercing a ",
-         "factor gives its level codes: an alphabetical ordering of the ",
-         "labels, not the data. Convert it deliberately, e.g. ",
-         "as.numeric(as.character(", arg, ")).", call. = FALSE)
+    cpt_abort("`", arg, "` is a factor. Detection needs numbers, and coercing ",
+               "a ", "factor gives its level codes: an alphabetical ordering ",
+               "of the ", "labels, not the data. Convert it deliberately, ",
+               "e.g. ", "as.numeric(as.character(", arg, ")).",
+              class = "bad_type")
   }
   if (is.character(x)) {
-    stop("`", arg, "` is character. `", arg, "` must be a numeric vector, ",
-         "matrix, or data.frame; convert it first, e.g. as.numeric(", arg,
-         ").", call. = FALSE)
+    cpt_abort("`", arg, "` is character. `", arg, "` must be a numeric ",
+               "vector, ", "matrix, or data.frame; convert it first, e.g. ",
+               "as.numeric(", arg, ").", class = "bad_type")
   }
   # Everything else keeps whatever as.numeric() already did for it -- a ts,
   # a zoo, a table, a difftime all convert cleanly -- and is refused only
@@ -598,8 +718,15 @@ coerce_series_values <- function(x, arg = "x") {
     }
   )
   if (!clean || is.null(num)) {
-    stop("`", arg, "` must be a numeric vector, matrix, or data.frame, not ",
-         class(x)[1], ".", call. = FALSE)
+    cpt_abort("`", arg, "` must be a numeric vector, matrix, or data.frame, ",
+               "not ", class(x)[1], ".",
+              # A fit where a series belongs is the likely mistake here
+              # (cpt_consensus(fit), cpt_replay(fit)): name the fix.
+              if (is_ggcpt(x)) {
+                paste0(" This function takes the series itself: pass `",
+                       arg, "$data$value` (and `index = ", arg,
+                       "$index`) from the fit.")
+              }, class = "bad_type")
   }
   num
 }

@@ -78,24 +78,34 @@
 cpt_annotate_events <- function(object, events, location = NULL,
                                 label = NULL, tolerance = 5) {
   if (!is_ggcpt(object)) {
-    stop("`object` must be a ggcpt object.", call. = FALSE)
+    cpt_abort("`object` must be a ggcpt object.", class = "bad_argument")
   }
   events <- as.data.frame(events)
   if (nrow(events) == 0) {
-    stop("`events` has no rows.", call. = FALSE)
+    cpt_abort("`events` has no rows.", class = "bad_argument")
   }
   validate_scalar(tolerance, "tolerance", min = 0)
 
   idx <- object$index
   n <- nrow(object$data)
 
+  # Column names, one each: a number or a vector reached `%in%` and `[[`
+  # as base R's "the condition has length > 1" or "subscript out of
+  # bounds".
+  for (a in c("location", "label")) {
+    v <- get(a)
+    if (!is.null(v) && !(is.character(v) && length(v) == 1L && !is.na(v))) {
+      cpt_abort("`", a, "` must be the name of one column of `events`.",
+                class = "bad_argument")
+    }
+  }
   if (is.null(location)) {
     location <- guess_event_column(events, idx)
   }
   if (!location %in% names(events)) {
-    stop("`location = \"", location, "\"` is not a column of `events` ",
-         "(columns: ", paste(names(events), collapse = ", "), ").",
-         call. = FALSE)
+    cpt_abort("`location = \"", location, "\"` is not a column of `events` ",
+              "(columns: ", paste(names(events), collapse = ", "), ").",
+              class = "bad_argument")
   }
   if (is.null(label)) {
     cand <- names(events)[vapply(events, function(v) {
@@ -107,6 +117,11 @@ cpt_annotate_events <- function(object, events, location = NULL,
     } else {
       label <- cand[1]
     }
+  }
+  if (!label %in% names(events)) {
+    cpt_abort("`label = \"", label, "\"` is not a column of `events` ",
+              "(columns: ", paste(names(events), collapse = ", "), ").",
+              class = "bad_argument")
   }
 
   raw <- events[[location]]
@@ -129,11 +144,11 @@ cpt_annotate_events <- function(object, events, location = NULL,
     # reads them as positions, which is the documented default, but it is a
     # guess -- so say which reading was used rather than leaving the caller
     # to infer it from the answer.
-    warning("`", location, "` is numeric and so is the result's index, and ",
-            "the values fall inside 1..", n, ", so they are read as ROW ",
-            "POSITIONS. If they are index values, look them up first, e.g. ",
-            "`events$", location, " <- match(events$", location,
-            ", fit$data$index_value)`.", call. = FALSE)
+    cpt_warn("`", location, "` is numeric and so is the result's index, and ",
+             "the values fall inside 1..", n, ", so they are read as ROW ",
+             "POSITIONS. If they are index values, look them up first, e.g. ",
+             "`events$", location, " <- match(events$", location,
+             ", fit$data$index_value)`.", class = "warning")
   }
   event_pos <- if (on_index && !is_numeric_like_index(idx)) {
     # A character index is explicitly supported (see check_index_usable()),
@@ -181,11 +196,11 @@ cpt_annotate_events <- function(object, events, location = NULL,
     } else {
       "their location is not a position in the series"
     }
-    warning(sum(lost), " of ", nrow(ev), " event(s) could not be placed ",
-            "on the series and are left out of all three outcomes (",
-            paste(utils::head(ev$event[lost], 3), collapse = ", "),
-            if (sum(lost) > 3) ", ..." else "", "): ", why, ".",
-            call. = FALSE)
+    cpt_warn(sum(lost), " of ", nrow(ev), " event(s) could not be placed ",
+             "on the series and are left out of all three outcomes (",
+             paste(utils::head(ev$event[lost], 3), collapse = ", "),
+             if (sum(lost) > 3) ", ..." else "", "): ", why, ".",
+             class = "dropped_input")
   }
   ev <- ev[!lost, , drop = FALSE]
 
@@ -304,9 +319,9 @@ guess_event_column <- function(events, idx) {
   }
   num <- names(events)[vapply(events, is.numeric, logical(1))]
   if (length(num) == 0) {
-    stop("Could not find a location column in `events`: none is numeric or ",
-         "matches the result's index type. Name it with `location =`.",
-         call. = FALSE)
+    cpt_abort("Could not find a location column in `events`: none is numeric ",
+               "or ", "matches the result's index type. Name it with ",
+               "`location =`.", class = "bad_argument")
   }
   num[1]
 }
@@ -437,8 +452,10 @@ autoplot.ggcpt_events <- function(object, repel = NULL, ...) {
 #'
 #' @param object A \code{ggcpt} object.
 #' @param format \code{"md"} (default, GitHub-flavoured markdown as a
-#'   character vector), \code{"text"} (plain text) or \code{"gt"} (a
-#'   \pkg{gt} table of the changepoints, for a publication).
+#'   character vector), \code{"text"} (plain text), \code{"gt"} (a
+#'   \pkg{gt} table of the changepoints, for a publication) or
+#'   \code{"json"} (the whole result under \code{\link{as_json}()}'s
+#'   versioned schema, for a pipeline rather than a reader).
 #' @param file Optional path to write to. The report is returned invisibly
 #'   when a file is written. Ignored for \code{format = "gt"}, which returns
 #'   a table object rather than lines of text.
@@ -459,13 +476,13 @@ autoplot.ggcpt_events <- function(object, repel = NULL, ...) {
 #' set.seed(2026)
 #' fit <- cpt_detect(c(rnorm(60), rnorm(60, 4)), method = "pelt")
 #' cat(cpt_report(fit, session = FALSE), sep = "\n")
-cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
-                       stability = NULL, events = NULL, confint = TRUE,
-                       session = TRUE) {
+cpt_report <- function(object, format = c("md", "text", "gt", "json"),
+                       file = NULL, stability = NULL, events = NULL,
+                       confint = TRUE, session = TRUE) {
   if (!is_ggcpt(object)) {
-    stop("`object` must be a ggcpt object.", call. = FALSE)
+    cpt_abort("`object` must be a ggcpt object.", class = "bad_argument")
   }
-  format <- match.arg(format)
+  format <- cpt_match_arg(format)
   validate_flag(confint, "confint")
   validate_flag(session, "session")
   # After the gt early return: `file` is documented as ignored for that
@@ -473,6 +490,17 @@ cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
   # fine.
   if (format == "gt") return(cpt_gt(object))
   validate_report_path(file)
+  if (format == "json") {
+    out <- as_json(object)
+    if (!is.null(file)) {
+      # The same checks as the other formats: `file = ""` or a directory
+      # reached writeLines() unexamined.
+      validate_report_path(file)
+      writeLines(out, file)
+      return(invisible(out))
+    }
+    return(out)
+  }
 
   h <- function(txt, lvl = 2) {
     if (format == "md") paste0(strrep("#", lvl), " ", txt) else toupper(txt)
@@ -528,16 +556,25 @@ cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
   out <- c(out, h("Segments"), "",
            fenced(utils::capture.output(print(object$segments, n = 50))), "")
 
+  # Where a reader decides whether to believe the count: next to it.
+  assumptions <- tryCatch(cpt_assumptions(object), error = function(e) NULL)
+  if (!is.null(assumptions)) {
+    out <- c(out, h("Assumptions"), "",
+             fenced(utils::capture.output(print(assumptions))), "")
+  }
+
   if (!is.null(stability)) {
     if (!inherits(stability, "ggcpt_stability")) {
-      stop("`stability` must be a cpt_stability() result.", call. = FALSE)
+      cpt_abort("`stability` must be a cpt_stability() result.",
+                class = "bad_argument")
     }
     out <- c(out, h("Stability"), "",
              fenced(utils::capture.output(print(stability))), "")
   }
   if (!is.null(events)) {
     if (!inherits(events, "ggcpt_events")) {
-      stop("`events` must be a cpt_annotate_events() result.", call. = FALSE)
+      cpt_abort("`events` must be a cpt_annotate_events() result.",
+                class = "bad_argument")
     }
     out <- c(out, h("Events"), "",
              fenced(utils::capture.output(print(events))), "")
@@ -549,7 +586,12 @@ cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
     out <- c(out, h("Citation"), "", ref, "")
   }
   out <- c(out, h("Reproducibility"), "",
-           fenced(c("Call:", utils::capture.output(print(object$call)))), "")
+           fenced(c("Call:", if (is.null(object$call)) {
+             "(not recorded)"
+           } else {
+             utils::capture.output(print(object$call))
+           })), "",
+           archive_note(object), "")
   if (isTRUE(session)) {
     out <- c(out,
              fenced(utils::capture.output(print(utils::sessionInfo()))), "")
@@ -565,12 +607,31 @@ cpt_report <- function(object, format = c("md", "text", "gt"), file = NULL,
   out
 }
 
+# Internal: how to keep this result. A report is where nobody wants the
+# engine's scratch space retained (§223.2), and everything else in a ggcpt
+# object is plain data that loads in a bare R session.
+#' @noRd
+archive_note <- function(object) {
+  base <- paste0("The changepoints, the series and the metadata are plain ",
+                 "data: a saved result reads back in any R session with no ",
+                 "packages installed, and cpt_export() writes JSON or CSV ",
+                 "for other languages.")
+  if (is.null(object$fit)) return(base)
+  size <- tryCatch(as.numeric(utils::object.size(object$fit)),
+                   error = function(e) NA_real_)
+  paste0(base, " Only `$fit`, the engine's own object",
+         if (is.finite(size)) paste0(" (", format(round(size / 1024^2, 1)),
+                                     " MB)") else "",
+         ", needs the engine; drop it before saving with `fit$fit <- ",
+         "NULL`, or refit with `keep_fit = FALSE`.")
+}
+
 # Internal: check the `file` path before building the report, so a bad path
 # fails immediately rather than after all the work and in base R's words.
 # writeLines() answers a missing directory or a directory path with "cannot
 # open the connection", an NA with "'con' is not a connection", and a
-# two-element vector with "invalid 'description' argument" -- none of which
-# names the argument. `file = ""` is worse than any of them: writeLines()
+# two-element vector with "invalid 'description' argument", and none of
+# them names the argument. `file = ""` is worse than any of them: writeLines()
 # sends the report to the console and no file appears, so the caller has a
 # report they believe they saved.
 #' @noRd
@@ -578,18 +639,18 @@ validate_report_path <- function(file) {
   if (is.null(file)) return(invisible(TRUE))
   if (!is.character(file) || length(file) != 1L || is.na(file) ||
       !nzchar(file)) {
-    stop("`file` must be a single non-empty file path, or NULL to return ",
-         "the report lines.", call. = FALSE)
+    cpt_abort("`file` must be a single non-empty file path, or NULL to return ",
+              "the report lines.", class = "bad_argument")
   }
   if (dir.exists(file)) {
-    stop("`file` is a directory: ", file,
-         ". Give the path of a file inside it.", call. = FALSE)
+    cpt_abort("`file` is a directory: ", file, ". Give the path of a file ",
+               "inside it.", class = "bad_argument")
   }
   parent <- dirname(file)
   if (!dir.exists(parent)) {
-    stop("The directory for `file` does not exist: ", parent,
-         ". Create it first, e.g. dir.create(\"", parent,
-         "\", recursive = TRUE).", call. = FALSE)
+    cpt_abort("The directory for `file` does not exist: ", parent,
+              ". Create it first, e.g. dir.create(\"", parent, "\", recursive ",
+               "= TRUE).", class = "bad_argument")
   }
   invisible(TRUE)
 }
@@ -612,7 +673,7 @@ validate_report_path <- function(file) {
 #' cpt_gt(cpt_detect(c(rnorm(60), rnorm(60, 4)), method = "pelt"))
 cpt_gt <- function(object, title = NULL, subtitle = NULL, digits = 3) {
   if (!is_ggcpt(object)) {
-    stop("`object` must be a ggcpt object.", call. = FALSE)
+    cpt_abort("`object` must be a ggcpt object.", class = "bad_argument")
   }
   validate_scalar(digits, "digits", min = 0)
   cp <- object$changepoints
@@ -634,8 +695,9 @@ cpt_gt <- function(object, title = NULL, subtitle = NULL, digits = 3) {
   }
 
   if (!requireNamespace("gt", quietly = TRUE)) {
-    message("Package 'gt' is not installed, so the plain tibble is returned. ",
-            "Install it with install.packages('gt') for a formatted table.")
+    cpt_inform("Package 'gt' is not installed, so the plain tibble is ",
+                "returned. ", "Install it with install.packages('gt') for a ",
+                "formatted table.")
     return(tbl)
   }
   gt::tab_header(

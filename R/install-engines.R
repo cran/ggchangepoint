@@ -8,9 +8,13 @@
 #' family in one call.
 #'
 #' Every package comes from the repositories in \code{getOption("repos")}
-#' except \pkg{fpop}, which was archived from CRAN in 2026 at its
-#' maintainer's request and is installed from R-Forge
-#' (\url{https://R-Forge.R-project.org}), where it is developed.
+#' except the two engines CRAN has archived. \pkg{fpop}, archived in
+#' September 2026 at its maintainer's request, is installed from R-Forge
+#' (\url{https://R-Forge.R-project.org}), where it is developed. \pkg{ocp},
+#' archived in October 2026, is installed from the package website
+#' (\url{https://pursuitofdatascience.github.io/ggchangepoint/repo/}), a
+#' CRAN-like repository that serves the last CRAN release of every engine
+#' CRAN no longer does.
 #'
 #' @param bundle Which family to install:
 #'   \describe{
@@ -29,7 +33,7 @@
 #'     \item{\code{"inference"}}{\pkg{nsp}, \pkg{crossvalidationCP},
 #'       \pkg{changepoint.influence}, \pkg{penaltyLearning}.}
 #'     \item{\code{"applied"}}{\pkg{trend}, \pkg{ChangePointTaylor},
-#'       \pkg{bfast}, \pkg{wbsts}, \pkg{binsegRcpp}.}
+#'       \pkg{bfast}, \pkg{wbsts}, \pkg{binsegRcpp}, \pkg{anomaly}.}
 #'     \item{\code{"time"}}{index and coercion support: \pkg{zoo},
 #'       \pkg{xts}, \pkg{tsibble}.}
 #'     \item{\code{"reporting"}}{\pkg{gt}, \pkg{ggrepel}, \pkg{plotly},
@@ -51,7 +55,7 @@
 cpt_install_engines <- function(bundle = "core", dry_run = FALSE, ...) {
   validate_flag(dry_run, "dry_run")
   bundles <- engine_bundles()
-  bundle <- match.arg(bundle, c(names(bundles), "all"), several.ok = TRUE)
+  bundle <- cpt_match_arg(bundle, c(names(bundles), "all"), several.ok = TRUE)
   if ("all" %in% bundle) bundle <- names(bundles)
 
   want <- do.call(rbind, lapply(bundle, function(b) {
@@ -63,13 +67,13 @@ cpt_install_engines <- function(bundle = "core", dry_run = FALSE, ...) {
 
   todo <- want$package[!want$installed_before]
   if (length(todo) == 0) {
-    message("Every package in ", paste(bundle, collapse = ", "),
-            " is already installed.")
+    cpt_inform("Every package in ", paste(bundle, collapse = ", "),
+               " is already installed.")
     want$installed_after <- TRUE
     return(invisible(want))
   }
   if (isTRUE(dry_run)) {
-    message("Would install: ", paste(todo, collapse = ", "))
+    cpt_inform("Would install: ", paste(todo, collapse = ", "))
     want$installed_after <- want$installed_before
     return(invisible(want))
   }
@@ -89,10 +93,9 @@ cpt_install_engines <- function(bundle = "core", dry_run = FALSE, ...) {
                                  logical(1))
   failed <- want$package[!want$installed_after]
   if (length(failed) > 0) {
-    warning("These packages are still not installed: ",
-            paste(failed, collapse = ", "),
-            ". Some need system libraries (JAGS for mcp, for example).",
-            call. = FALSE)
+    cpt_warn("These packages are still not installed: ",
+             paste(failed, collapse = ", "), ". Some need system libraries ",
+              "(JAGS for mcp, for example).", class = "engine_failed")
   }
   invisible(want)
 }
@@ -126,7 +129,7 @@ engine_bundles <- function() {
     inference = c("nsp", "crossvalidationCP", "changepoint.influence",
                   "penaltyLearning"),
     applied = eng(c("pettitt", "buishand", "snht", "taylor", "bfast",
-                    "wbsts", "binsegrcpp")),
+                    "wbsts", "binsegrcpp", "capa")),
     # Only packages this one actually reads or writes through. `tsbox` and
     # `patchwork` were listed here and appear nowhere else in the package --
     # not in Suggests, not in R/, not in the tests or vignettes -- so the

@@ -27,6 +27,17 @@ x <- c(rnorm(120), rnorm(120, 3), rnorm(120, 0.5))
 fit <- cpt_detect(x, method = "pelt")
 fit
 
+## ----confint-conformal--------------------------------------------------------
+ci <- cpt_confint(fit, method = "conformal", B = 99, seed = 1)
+ci
+
+## ----confint-profile, fig.height = 3, fig.alt = "Conformal p-value of every candidate location around each changepoint"----
+ggplot(attr(ci, "profile"), aes(position, p_value)) +
+  geom_col(width = 1) +
+  geom_hline(yintercept = 0.05, linetype = "dashed") +
+  facet_wrap(~cp, scales = "free_x") +
+  labs(x = "Candidate location", y = "Conformal p-value")
+
 ## ----confint-bootstrap--------------------------------------------------------
 cpt_confint(fit, method = "bootstrap", B = 100, seed = 1)
 
@@ -112,6 +123,27 @@ head(cpt_solution_path(cpt_detect(x, method = "wbs")), 5)
 try({
 cpt_statistic(fit)
 })
+
+## ----attribute----------------------------------------------------------------
+set.seed(7)
+X <- matrix(rnorm(160 * 5), 160, 5,
+            dimnames = list(NULL, paste0("sensor", 1:5)))
+X[81:160, 2] <- X[81:160, 2] + 1.5
+X[81:160, 4] <- X[81:160, 4] * 2.5
+att <- cpt_attribute(cpt_detect(X, method = "ecp"), B = 199, seed = 1)
+glance(att)
+att[att$changed, c("cp", "coordinate", "type", "p_adjusted")]
+
+## ----counterfactual, fig.height = 3, fig.alt = "Series with the pre-change level carried forward as a dashed counterfactual"----
+cf <- cpt_counterfactual(fit)
+glance(cf)
+autoplot(cf)
+
+## ----abruptness---------------------------------------------------------------
+cpt_abruptness(fit)
+
+## ----k-weights----------------------------------------------------------------
+cpt_k_weights(cpt_select(x, criterion = "bic", k_max = 6))
 
 ## ----report-------------------------------------------------------------------
 cat(head(cpt_report(fit, session = FALSE), 20), sep = "\n")

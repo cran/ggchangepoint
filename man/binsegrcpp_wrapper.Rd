@@ -34,8 +34,10 @@ list (\code{"mean_norm"}, \code{"meanvar_norm"}, \code{"poisson"},
 \item{n_segments}{Number of segments to report. When \code{NULL} (the
 default) it is chosen by BIC over the nested family the engine returns.}
 
-\item{min_segment_length}{Minimum segment length. Passed through when
-supplied.}
+\item{min_segment_length}{Minimum segment length. Defaults to \code{2}
+for the single-parameter costs (\code{mean_norm}, \code{poisson},
+\code{l1}), whose engine default allows one-observation segments, and
+to the engine's own default otherwise.}
 }
 \value{
 A \code{ggcpt} object.
@@ -63,6 +65,7 @@ Other changepoint engines:
 \code{\link{beast_wrapper}()},
 \code{\link{bfast_wrapper}()},
 \code{\link{bocpd_wrapper}()},
+\code{\link{capa_wrapper}()},
 \code{\link{cpm_wrapper}()},
 \code{\link{cpop_wrapper}()},
 \code{\link{cpt_wrapper}()},

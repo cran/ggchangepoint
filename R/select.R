@@ -58,7 +58,8 @@
 #'     \item{\code{"crops_elbow"}}{the knee of the CROPS cost-against-\eqn{K}
 #'       curve, made an explicit rule (maximum distance from the chord
 #'       joining the endpoints, the standard Kneedle construction) rather
-#'       than something eyeballed off a plot.}
+#'       than something eyeballed off a plot. An elbow needs \eqn{K \ge 1},
+#'       so this criterion \strong{cannot return} \eqn{K = 0}.}
 #'     \item{\code{"cv"}}{order-preserved sample-splitting cross-validation
 #'       (COPPS) via \pkg{crossvalidationCP}. This is the criterion with a
 #'       consistency guarantee. It chooses \eqn{K} with that package's own
@@ -70,8 +71,15 @@
 #'     \item{\code{"stability"}}{the \eqn{K} whose changepoints are
 #'       re-detected most often under within-segment bootstrap resampling.
 #'       A robustness criterion, not a model-selection one; use it to
-#'       cross-check the others.}
+#'       cross-check the others. It \strong{cannot return} \eqn{K = 0}.}
 #'   }
+#'   \code{"bic"}, \code{"mbic"} and \code{"cv"} can return \eqn{K = 0};
+#'   \code{"aic"} in principle can and in practice (measured at
+#'   \eqn{n = 400}) picked \code{k_max} or next to it at every true
+#'   \eqn{K}. \code{cpt_select()} warns (class
+#'   \code{ggchangepoint_selection_unadjusted}) when \code{"aic"} lands at
+#'   the top of the ladder, and when \code{"crops_elbow"} or
+#'   \code{"stability"} returns its smallest candidate.
 #' @param k_max Largest number of changepoints considered. Defaults to
 #'   \code{20}, capped at \code{floor(n / 4)}.
 #' @param folds Folds for \code{criterion = "cv"}. Defaults to \code{5};
@@ -134,7 +142,7 @@ cpt_select <- function(x, method = "pelt",
                                      "cv", "stability"),
                        k_max = 20, folds = 5, B = 100, change_in = "mean",
                        index = NULL, seed = NULL, ...) {
-  criterion <- match.arg(criterion)
+  criterion <- cpt_match_arg(criterion)
   if (is_ggcpt(x)) {
     method <- x$method
     # ...and the change type, which was left at this function's own default
@@ -158,6 +166,18 @@ cpt_select <- function(x, method = "pelt",
     # when the input was plotted in dates.
     if (is.null(index)) index <- x$index
     index_label <- x$index_label %||% "Index"
+    # The ladder calls the engines directly, one exactly-K segmentation per
+    # rung, so a fit's constraints cannot reach it. Say so rather than
+    # comparing segmentations the fit would not have allowed in silence.
+    held <- intersect(names(rerun_constraints(x)),
+                      c("fixed", "within", "min_segment", "min_effect"))
+    if (length(held)) {
+      cpt_warn("`cpt_select()` compares unconstrained segmentations, so this ",
+               "fit's ", paste0("`", held, "`", collapse = ", "), " ",
+               if (length(held) == 1L) "is" else "are", " not applied to ",
+               "the candidates.", class = "constraint",
+               data = list(constraints = held))
+    }
   } else {
     # Up front, because every rung of the ladder calls cpt_detect() inside
     # tryCatch(): a typo'd method or an unsupported change type used to
@@ -172,9 +192,18 @@ cpt_select <- function(x, method = "pelt",
     index_label <- parts$index_label %||% "Index"
   }
   if (!is.null(index) && length(index) != length(series)) {
-    stop("`index` must have one entry per observation: ", length(index),
-         " supplied for a series of ", length(series), ".", call. = FALSE)
+    cpt_abort("`index` must have one entry per observation: ", length(index),
+              " supplied for a series of ", length(series), ".",
+              class = "bad_argument")
   }
+  # A fit with gaps (`na_action = "omit"`): the ladder and every criterion
+  # see the observed values, and the answer is put back in the original
+  # positions at the end. The raw series used to reach them, and the
+  # selection stopped in base R with "missing value where TRUE/FALSE
+  # needed".
+  full_series <- series
+  na_keep <- if (anyNA(series)) !is.na(series) else NULL
+  if (!is.null(na_keep)) series <- series[na_keep]
   n <- length(series)
   validate_scalar(k_max, "k_max", min = 0)
   validate_scalar(folds, "folds", min = 2)
@@ -182,7 +211,25 @@ cpt_select <- function(x, method = "pelt",
   k_max <- min(as.integer(k_max), max(1L, floor(n / 4)))
   local_seed(seed)
 
-  ladder <- candidate_ladder(series, method, change_in, k_max, ...)
+  # Every criterion but "stability" scores a change in the mean (see
+  # `change_in` above), and a ladder of another change type is scored as one
+  # anyway. Said on the call, not only on the help page: measured, a real
+  # variance change at n = 200 chose K = 0 under "bic", and a slope change
+  # chose K = 19, the mean cost's staircase of steps along the line.
+  if (!identical(change_in, "mean") && criterion != "stability") {
+    cpt_warn("`criterion = \"", criterion, "\"` scores every candidate as a ",
+             "change in the mean, but this ladder's `change_in` is \"",
+             change_in, "\", so the chosen K answers a different question ",
+             "from the one the candidates were found for. ",
+             "`criterion = \"stability\"` scores by re-detection with the ",
+             "same change type.", class = "assumption",
+             data = list(criterion = criterion, change_in = change_in))
+  }
+  # The ladder and the re-detection criteria re-fit many times; each
+  # advisory once.
+  seen <- new.env(parent = emptyenv())
+  ladder <- once_per_kind(candidate_ladder(series, method, change_in, k_max,
+                                           ...), seen)
   costs <- vapply(ladder$cpts, function(cp) gaussian_cost(series, cp),
                   numeric(1))
   ks <- ladder$k
@@ -191,13 +238,13 @@ cpt_select <- function(x, method = "pelt",
   # segmentation at every rung, so there is no ladder to score. Say so
   # rather than reporting a "chosen" K off a one- or two-point curve.
   if (length(ks) < 3) {
-    warning("`", method, "` produced only ", length(ks),
-            " distinct segmentation(s) over the candidate range, so there ",
-            "is little for `criterion = \"", criterion,
-            "\"` to choose between. Methods with an explicit penalty ",
-            "(pelt, binseg, segneigh, amoc, fpop) give a full ladder; the ",
-            "search-based methods tune themselves and largely ignore ",
-            "`penalty`.", call. = FALSE)
+    cpt_warn("`", method, "` produced only ", length(ks),
+             " distinct segmentation(s) over the candidate range, so there ",
+             "is little for `criterion = \"", criterion, "\"` to choose ",
+              "between. Methods with an explicit penalty ", "(pelt, binseg, ",
+              "segneigh, amoc, fpop) give a full ladder; the ", "search-based ",
+              "methods tune themselves and largely ignore ", "`penalty`.",
+             class = "collapsed_ladder")
   }
 
   value <- switch(criterion,
@@ -211,7 +258,7 @@ cpt_select <- function(x, method = "pelt",
     stability = rep(NA_real_, length(ks))
   )
 
-  chosen_k <- switch(criterion,
+  chosen_k <- once_per_kind(switch(criterion,
     bic = ks[which.min(value)],
     aic = ks[which.min(value)],
     mbic = ks[which.min(value)],
@@ -222,7 +269,7 @@ cpt_select <- function(x, method = "pelt",
                                change_in = change_in, ...)
       ks[which.max(value)]
     }
-  )
+  ), seen)
   # `cv` and `stability` are the two criteria whose answer comes from a
   # separate search rather than from `value`, and each can come back with
   # nothing usable: stability_curve() is NA at every rung with no
@@ -232,23 +279,51 @@ cpt_select <- function(x, method = "pelt",
   # `0:NA` into candidate_ladder(). Neither message names the criterion or
   # the series.
   if (length(chosen_k) != 1L || is.na(chosen_k)) {
-    stop("`criterion = \"", criterion, "\"` could not score the candidate ",
-         "segmentations for `", method, "`: it scores by re-detection, and ",
-         "every rung on the ladder (K = ", paste(ks, collapse = ", "),
-         ") came back undefined. Use `criterion = \"bic\"`, `\"aic\"` or ",
-         "`\"mbic\"`, which are closed-form, or a method with an explicit ",
-         "penalty (pelt, binseg, segneigh, amoc, fpop).", call. = FALSE)
+    cpt_abort("`criterion = \"", criterion, "\"` could not score the ",
+               "candidate ", "segmentations for `", method, "`: it scores by ",
+               "re-detection, and ", "every rung on the ladder (K = ",
+              paste(ks, collapse = ", "), ") came back undefined. Use ",
+               "`criterion = \"bic\"`, `\"aic\"` or ", "`\"mbic\"`, which are ",
+               "closed-form, or a method with an explicit ", "penalty (pelt, ",
+               "binseg, segneigh, amoc, fpop).", class = "engine_error")
   }
   if (!chosen_k %in% ks) {
     # Cross-validation searches its own ladder, so its answer can exceed the
     # candidates we scored; extend rather than silently snapping to k_max.
-    extra <- candidate_ladder(series, method, change_in, chosen_k, ...)
+    extra <- once_per_kind(candidate_ladder(series, method, change_in,
+                                            chosen_k, ...), seen)
     keep <- extra$k == chosen_k
     ladder <- list(k = c(ks, chosen_k),
                    cpts = c(ladder$cpts, extra$cpts[keep]))
     ks <- ladder$k
     costs <- c(costs, gaussian_cost(series, ladder$cpts[[length(ks)]]))
     value <- c(value, NA_real_)
+  }
+
+  # Two ways the answer can be forced rather than chosen, each said once.
+  # AIC's penalty does not grow with n, so it is not consistent for the
+  # number of changepoints: measured at n = 400, it picked k_max or next to
+  # it at every true K from 0 to 5. And an elbow or a re-detection ladder is
+  # defined only for K >= 1, so crops_elbow and stability cannot answer "no
+  # changepoints"; returning their smallest candidate is the only sign the
+  # answer was the floor of the question rather than the data's.
+  if (criterion == "aic" && chosen_k >= max(ks) - 1L && max(ks) > 1L) {
+    cpt_warn("`criterion = \"aic\"` chose K = ", chosen_k, " of at most ",
+             max(ks), ". AIC's penalty does not grow with the series, so it ",
+             "is not consistent for the number of changepoints and tends to ",
+             "`k_max` whatever the data; `\"bic\"` or `\"mbic\"` recovered ",
+             "the true K in 90% of measured cases.", class = "selection",
+             data = list(criterion = criterion, k = chosen_k))
+  }
+  if (criterion %in% c("crops_elbow", "stability") &&
+      chosen_k == min(ks[ks >= 1L])) {
+    cpt_warn("`criterion = \"", criterion, "\"` chose K = ", chosen_k,
+             ", its smallest candidate, and it cannot choose K = 0 at all: ",
+             "the answer may be the edge of what it can say rather than ",
+             "what the data say. `\"bic\"`, `\"mbic\"` and `\"cv\"` can ",
+             "return no changepoints; cpt_test_null() tests for any.",
+             class = "selection",
+             data = list(criterion = criterion, k = chosen_k))
   }
 
   chosen_i <- match(chosen_k, ks)
@@ -264,11 +339,21 @@ cpt_select <- function(x, method = "pelt",
                   change_in = change_in,
                   penalty = list(type = paste0("selected by ", criterion),
                                  value = NA_real_))
+  # What made it, rather than the as_ggcpt() line above.
+  fit$call <- record_call(match.call(), "cpt_select")
+  if (!is.null(na_keep)) {
+    pos <- which(na_keep)
+    fit <- restore_missing(fit, list(keep = na_keep, pos = pos,
+                                     n = length(na_keep), full = full_series))
+    tab$cpts <- lapply(tab$cpts, function(cp) {
+      if (length(cp) && !anyNA(cp)) pos[cp] else cp
+    })
+  }
   fit <- attach_index(fit, index, index_label)
 
   structure(
     list(criterion_table = tab, k = chosen_k, fit = fit,
-         criterion = criterion, method = method, data = series,
+         criterion = criterion, method = method, data = full_series,
          index = index, index_label = index_label),
     class = "ggcpt_selection"
   )
@@ -307,9 +392,16 @@ candidate_ladder <- function(series, method, change_in, k_max, ...) {
     found <- vector("list", k_max + 1L)
     found[[1]] <- integer(0)
     for (p in pens) {
+      # The low end of the sweep over-segments on purpose, so the
+      # implausible-count warning each such rung raises is about the
+      # ladder, not the data: a cpop slope ladder printed twelve of them.
       cp <- tryCatch(
-        cpt_detect(series, method = method, change_in = change_in,
-                   penalty = p, ...)$changepoints$cp,
+        withCallingHandlers(
+          cpt_detect(series, method = method, change_in = change_in,
+                     penalty = p, ...)$changepoints$cp,
+          ggchangepoint_implausible_count = function(w) {
+            invokeRestart("muffleWarning")
+          }),
         error = function(e) NULL
       )
       if (is.null(cp)) next
@@ -390,9 +482,9 @@ select_by_cv <- function(series, k_max, folds) {
     error = function(e) NULL
   )
   if (is.null(out)) {
-    stop("crossvalidationCP could not select a number of changepoints for ",
-         "this series. Try a different `criterion`, or a larger `k_max`.",
-         call. = FALSE)
+    cpt_abort("crossvalidationCP could not select a number of changepoints ",
+               "for ", "this series. Try a different `criterion`, or a larger ",
+               "`k_max`.", class = "engine_error")
   }
   as.integer(out)[1]
 }
@@ -418,13 +510,22 @@ stability_curve <- function(series, ladder, method, B, change_in = "mean",
     cp <- ladder$cpts[[i]]
     if (length(cp) == 0) return(NA_real_)
     fitted_step <- rep_segment_means(series, cp)
+    # A slope ladder resamples around a line per segment, as the
+    # bootstrap does (see resampling_signal()).
+    if (identical(change_in, "slope")) {
+      b <- c(0L, cp, n)
+      fitted_step <- segment_lines(series, b[-length(b)] + 1L, b[-1],
+                                   fitted_step)
+    }
     resid <- series - fitted_step
     seg_id <- rep(seq_len(length(cp) + 1L), diff(c(0L, cp, n)))
     hits <- numeric(length(cp))
     for (b in seq_len(B)) {
       resampled <- resid
       for (s in unique(seg_id)) {
-        idx <- which(seg_id == s)
+        # Observed positions only: a gap stays where it is, rather than
+        # being resampled into the replicate as a missing residual.
+        idx <- which(seg_id == s & !is.na(resid))
         # `sample.int()` on the index, not `sample()` on the values: R's
       # classic pitfall is that `sample(x, n)` means `sample.int(x, n)` when
       # `x` is a single number >= 1, so a one-observation segment resamples
@@ -453,9 +554,9 @@ stability_curve <- function(series, ladder, method, B, change_in = "mean",
     mean(hits / B)
   }, numeric(1))
   if (n_tried > 0L && n_failed == n_tried) {
-    stop("`criterion = \"stability\"` could not re-run `", method,
-         "` on any bootstrap replicate. The first error was: ", first_error,
-         call. = FALSE)
+    cpt_abort("`criterion = \"stability\"` could not re-run `", method,
+              "` on any bootstrap replicate. The first error was: ",
+              first_error, class = "engine_error")
   }
   curve
 }
@@ -514,7 +615,7 @@ autoplot.ggcpt_selection <- function(object,
                                      plot_type = c("criterion",
                                                    "segmentation", "ladder"),
                                      max_facets = 12, ...) {
-  plot_type <- match.arg(plot_type)
+  plot_type <- cpt_match_arg(plot_type)
   tab <- object$criterion_table
 
   if (plot_type == "criterion") {

@@ -24,7 +24,7 @@ cpt_install_engines(bundle = "core", dry_run = FALSE, ...)
   \item{\code{"inference"}}{\pkg{nsp}, \pkg{crossvalidationCP},
     \pkg{changepoint.influence}, \pkg{penaltyLearning}.}
   \item{\code{"applied"}}{\pkg{trend}, \pkg{ChangePointTaylor},
-    \pkg{bfast}, \pkg{wbsts}, \pkg{binsegRcpp}.}
+    \pkg{bfast}, \pkg{wbsts}, \pkg{binsegRcpp}, \pkg{anomaly}.}
   \item{\code{"time"}}{index and coercion support: \pkg{zoo},
     \pkg{xts}, \pkg{tsibble}.}
   \item{\code{"reporting"}}{\pkg{gt}, \pkg{ggrepel}, \pkg{plotly},
@@ -52,9 +52,13 @@ family in one call.
 }
 \details{
 Every package comes from the repositories in \code{getOption("repos")}
-except \pkg{fpop}, which was archived from CRAN in 2026 at its
-maintainer's request and is installed from R-Forge
-(\url{https://R-Forge.R-project.org}), where it is developed.
+except the two engines CRAN has archived. \pkg{fpop}, archived in
+September 2026 at its maintainer's request, is installed from R-Forge
+(\url{https://R-Forge.R-project.org}), where it is developed. \pkg{ocp},
+archived in October 2026, is installed from the package website
+(\url{https://pursuitofdatascience.github.io/ggchangepoint/repo/}), a
+CRAN-like repository that serves the last CRAN release of every engine
+CRAN no longer does.
 }
 \examples{
 cpt_install_engines("bayesian", dry_run = TRUE)

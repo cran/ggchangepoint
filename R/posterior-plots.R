@@ -16,7 +16,7 @@
 #' ggcpt_posterior(res)
 ggcpt_posterior <- function(x, prob_threshold = NULL) {
   if (!is_ggcpt(x)) {
-    stop("`x` must be a ggcpt object.", call. = FALSE)
+    cpt_abort("`x` must be a ggcpt object.", class = "bad_argument")
   }
 
   prob <- posterior_prob_profile(x)
@@ -34,9 +34,12 @@ ggcpt_posterior <- function(x, prob_threshold = NULL) {
                    " `ci_lower`/`ci_upper` on the changepoints tibble and",
                    " `fitted` on $data, not as a per-location profile."),
       "")
-    stop("No posterior probability profile found on this object. ",
-         "ggcpt_posterior() supports results from bcp_wrapper() and ",
-         "beast_wrapper().", extra, call. = FALSE)
+    cpt_abort(dropped_fit_reason(x, c("bcp", "beast"),
+                                 "the posterior profile") %||%
+                paste0("No posterior probability profile found on this ",
+                       "object. ggcpt_posterior() supports results from ",
+                       "bcp_wrapper() and beast_wrapper().", extra),
+              class = "capability_absent")
   }
 
   if (is.null(prob_threshold)) {
@@ -87,14 +90,23 @@ ggcpt_posterior <- function(x, prob_threshold = NULL) {
 # Bayesian wrapper fit, or NULL when the engine did not provide one.
 #' @noRd
 posterior_prob_profile <- function(x) {
-  n <- nrow(x$data)
+  n_full <- nrow(x$data)
+  # A fit made with `na_action = "omit"` has an engine that saw only the
+  # observed values: its profile is on that series, and is put back at the
+  # observed positions (zero at the gaps). Read unmapped, the probability
+  # of a changepoint at 0.996 showed as 0.4% of its window's mass.
+  na_map <- x$na_map
+  n <- if (!is.null(na_map)) length(na_map) else n_full
+  back <- function(prob) {
+    if (is.null(na_map)) prob else replace(rep(0, n_full), na_map, prob)
+  }
   fit <- x$fit
   if (is.null(fit)) return(NULL)
 
   if (inherits(fit, "bcp")) {
     prob <- as.numeric(fit$posterior.prob)
     prob[is.na(prob)] <- 0
-    return(prob[seq_len(n)])
+    return(back(prob[seq_len(n)]))
   }
 
   if (inherits(fit, "beast")) {
@@ -104,7 +116,7 @@ posterior_prob_profile <- function(x) {
     keep <- !is.na(cp) & !is.na(pr)
     idx <- pmin(pmax(as.integer(round(cp[keep])) - 1L, 1L), n)
     prob[idx] <- pr[keep]
-    return(prob)
+    return(back(prob))
   }
 
   NULL
@@ -127,14 +139,16 @@ posterior_prob_profile <- function(x) {
 #' ggcpt_runlength(res)
 ggcpt_runlength <- function(x, prob_floor = 1e-3) {
   if (!is_ggcpt(x) || !inherits(x$fit, "ocp")) {
-    stop("`x` must be a ggcpt object produced by bocpd_wrapper().",
-         call. = FALSE)
+    cpt_abort((if (is_ggcpt(x)) {
+      dropped_fit_reason(x, "bocpd", "the run-length posterior")
+    }) %||% "`x` must be a ggcpt object produced by bocpd_wrapper().",
+    class = "capability_absent")
   }
 
   R <- x$fit$R
   if (is.null(R)) {
-    stop("The ocp fit does not carry the run-length matrix; call ",
-         "bocpd_wrapper() with getR = TRUE.", call. = FALSE)
+    cpt_abort("The ocp fit does not carry the run-length matrix; call ",
+              "bocpd_wrapper() with getR = TRUE.", class = "capability_absent")
   }
 
   R <- as.matrix(R)
@@ -147,7 +161,12 @@ ggcpt_runlength <- function(x, prob_floor = 1e-3) {
   # length fell to 1 at x = 62 rather than at 61, the first observation of
   # the new segment. The prior column is dropped, since it describes no
   # observation.
-  n <- nrow(x$data)
+  # With gaps (`na_action = "omit"`) the engine saw the observed values
+  # only, so its columns are counted on that series and mapped back; the
+  # prior-column offset was computed against the full length, which put
+  # the prior at the first observation and shifted everything after it.
+  na_map <- x$na_map
+  n <- if (!is.null(na_map)) length(na_map) else nrow(x$data)
   shift <- max(0L, ncol(R) - n)
   df <- do.call(rbind, lapply(seq_len(ncol(R)), function(t) {
     obs <- t - shift
@@ -157,10 +176,20 @@ ggcpt_runlength <- function(x, prob_floor = 1e-3) {
     if (length(keep) == 0) return(NULL)
     data.frame(time = obs, run_length = keep - 1L, prob = probs[keep])
   }))
+  if (!is.null(na_map) && !is.null(df)) {
+    df$time <- na_map[df$time]
+    # An empty column at each gap keeps the raster's grid regular.
+    gaps <- setdiff(seq_len(nrow(x$data)), na_map)
+    if (length(gaps)) {
+      df <- rbind(df, data.frame(time = gaps, run_length = 0L,
+                                 prob = NA_real_))
+    }
+  }
 
   if (is.null(df)) {
-    stop("No run-length posterior mass exceeds `prob_floor` = ", prob_floor,
-         "; lower it (probabilities are at most 1).", call. = FALSE)
+    cpt_abort("No run-length posterior mass exceeds `prob_floor` = ",
+              prob_floor, "; lower it (probabilities are at most 1).",
+              class = "bad_argument")
   }
 
   # The time axis on the result's own index, as for ggcpt_posterior().
@@ -201,11 +230,11 @@ ggcpt_runlength <- function(x, prob_floor = 1e-3) {
 #' @family plotting
 ggcpt_interactive <- function(x, engine = c("plotly", "ggiraph"),
                               width_svg = 8, height_svg = 5, ...) {
-  engine <- match.arg(engine)
+  engine <- cpt_match_arg(engine)
   if (!requireNamespace(engine, quietly = TRUE)) {
-    stop("Package '", engine, "' is required for ",
-         "`engine = \"", engine, "\"`. Install it with ",
-         "install.packages('", engine, "').", call. = FALSE)
+    cpt_abort("Package '", engine, "' is required for ", "`engine = \"", engine,
+              "\"`. Install it with ", "install.packages('", engine, "').",
+              class = "engine_missing")
   }
   # Dispatch, don't hard-code: `ggcpt_consensus` inherits `ggcpt` (so
   # is_ggcpt() is TRUE) and registers its own autoplot method, so calling
@@ -214,7 +243,7 @@ ggcpt_interactive <- function(x, engine = c("plotly", "ggiraph"),
   # argument.
   p <- if (is_ggcpt(x)) ggplot2::autoplot(x, ...) else x
   if (!inherits(p, "ggplot")) {
-    stop("`x` must be a ggcpt object or a ggplot.", call. = FALSE)
+    cpt_abort("`x` must be a ggcpt object or a ggplot.", class = "bad_argument")
   }
   if (engine == "plotly") {
     return(plotly::ggplotly(p))

@@ -3,7 +3,11 @@
 # only the posterior is missing.
 #' @noRd
 mcp_has_samples <- function(fit) {
-  post <- if (is.list(fit)) fit[["mcmc_post", exact = TRUE]] else NULL
+  # unclass() first: mcp 0.4.0 deprecated `fit$mcmc_post` in favour of
+  # as_draws(), and its `$` and `[[` methods now warn on every read. The field
+  # still holds the draws, and reading it without dispatch is silent on 0.3.x
+  # and 0.4.x alike.
+  post <- if (is.list(fit)) unclass(fit)[["mcmc_post", exact = TRUE]] else NULL
   !is.null(post) && length(post) > 0 && NROW(post[[1]]) > 0
 }
 
@@ -84,12 +88,12 @@ mcp_wrapper <- function(x, change_in = c("mean", "slope", "var"),
   # declaring it would add a second package that cannot install without the
   # system library.
   if (!requireNamespace("mcp", quietly = TRUE)) {
-    stop("Package 'mcp' is required, and it samples through JAGS, a ",
-         "separate program installed outside R. Install JAGS from ",
-         "https://mcmc-jags.sourceforge.io and then ",
-         "install.packages('mcp').", call. = FALSE)
+    cpt_abort("Package 'mcp' is required, and it samples through JAGS, a ",
+              "separate program installed outside R. Install JAGS from ",
+              "https://mcmc-jags.sourceforge.io and then ",
+              "install.packages('mcp').", class = "engine_missing")
   }
-  change_in <- match.arg(change_in)
+  change_in <- cpt_match_arg(change_in)
   validate_scalar(n_changepoints, "n_changepoints", min = 1)
   # Positive integers in mcp's own documentation, and forwarded to JAGS.
   validate_scalar(iter, "iter", min = 1)
@@ -124,9 +128,14 @@ mcp_wrapper <- function(x, change_in = c("mean", "slope", "var"),
   # unless the caller already passed their own `par_x` through `...`.
   dots <- list(...)
   if (is.null(dots[["par_x", exact = TRUE]])) dots$par_x <- "t"
+  # mcp 0.4.0 renamed `adapt` to `warmup` and warns on the old name. This
+  # package keeps `adapt` as its own argument and passes it on under whichever
+  # name the installed mcp takes.
+  warmup_arg <- if ("warmup" %in% names(formals(mcp::mcp))) "warmup" else "adapt"
+  sampler <- stats::setNames(list(adapt), warmup_arg)
   fit <- do.call(mcp::mcp,
-                 c(list(model, data = df, prior = prior, iter = iter,
-                        adapt = adapt, chains = chains), dots))
+                 c(list(model, data = df, prior = prior, iter = iter),
+                   sampler, list(chains = chains), dots))
 
   # `mcp` warns rather than errors when JAGS cannot be reached, and hands
   # back an `mcpfit` with no posterior samples; `summary()` on that dies with
@@ -134,16 +143,17 @@ mcp_wrapper <- function(x, change_in = c("mean", "slope", "var"),
   # a fit either has samples or it is not a fit -- is what makes this
   # reportable, and it holds however JAGS came to be unavailable.
   if (!mcp_has_samples(fit)) {
-    stop("`mcp` returned a fit with no posterior samples, which means JAGS ",
-         "could not be reached. The 'mcp' package is installed, but JAGS ",
-         "itself is a separate program: install it from ",
-         "https://mcmc-jags.sourceforge.io and make sure 'rjags' can load ",
-         "(`requireNamespace(\"rjags\")`).", call. = FALSE)
+    cpt_abort("`mcp` returned a fit with no posterior samples, which means ",
+               "JAGS ", "could not be reached. The 'mcp' package is ",
+               "installed, but JAGS ", "itself is a separate program: install ",
+               "it from ", "https://mcmc-jags.sourceforge.io and make sure ",
+               "'rjags' can load ", "(`requireNamespace(\"rjags\")`).",
+              class = "engine_missing")
   }
 
   # The changepoint parameters are named cp_1, cp_2, ...
   smry <- as.data.frame(summary(fit))
-  cp_rows <- grep("^cp_", smry$name)
+  cp_rows <- grep("^cp_", smry[["parameter"]] %||% smry[["name"]])
   if (length(cp_rows) == 0) {
     return(ggcpt_build(data_vec, integer(0), method = "mcp",
                        change_in = change_in,
@@ -165,7 +175,7 @@ mcp_wrapper <- function(x, change_in = c("mean", "slope", "var"),
 
   fitted <- tryCatch({
     pr <- stats::fitted(fit)
-    as.numeric(pr$fitted %||% pr$estimate)[seq_len(n)]
+    as.numeric(pr[[".mean"]] %||% pr[["fitted"]] %||% pr[["estimate"]])[seq_len(n)]
   }, error = function(e) NULL)
   if (!is.null(fitted) && length(fitted) != n) fitted <- NULL
 

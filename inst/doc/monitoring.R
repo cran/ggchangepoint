@@ -88,6 +88,15 @@ vapply(c(0.05, 0.01, 0.001),
        numeric(1))
 nrow(alarms(cpt_replay(ic, method = "edetector", arl0 = 5000)))
 
+## ----cusum--------------------------------------------------------------------
+set.seed(11)
+chart <- cpt_monitor("cusum", baseline = rnorm(300), arl0 = 500)
+chart <- cpt_update(chart, c(rnorm(150), rnorm(100, 1)))
+chart
+
+## ----cusum-chart, fig.height = 3, fig.alt = "CUSUM control chart with its upper and lower sums against the decision interval"----
+autoplot(chart, plot_type = "control_chart")
+
 ## ----ocd-error, error = TRUE--------------------------------------------------
 try({
 set.seed(5206)

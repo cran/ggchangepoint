@@ -1,0 +1,327 @@
+# ---------------------------------------------------------------------------
+# "No changepoints detected" is not an answer.
+#
+# An empty result means one of two things that call for opposite actions:
+# the series is stable, or the analysis had no power to see a change of the
+# size that matters. The package knew enough to tell them apart
+# (cpt_min_detectable() answers the second question) and said neither. It
+# also offered no test of the question an empty answer raises, "is there a
+# change anywhere at all?", which is better posed than any test of a
+# located change because nothing was selected.
+# ---------------------------------------------------------------------------
+
+#' Test for a change anywhere in a series
+#'
+#' A test of the global null hypothesis "the series has no changepoint",
+#' the question an empty detection raises. Nothing is located first, so
+#' nothing is selected, and the p-value means what it says.
+#'
+#' @param x A numeric series, or a \code{ggcpt} fit (its series is used).
+#' @param method Which test:
+#'   \describe{
+#'     \item{\code{"cusum"}}{(the default) the CUSUM test for a change in
+#'       mean: the largest standardised cumulative-sum deviation, referred to
+#'       the Kolmogorov distribution of the supremum of a Brownian bridge.
+#'       The noise scale is estimated from first differences, which a change
+#'       barely affects.}
+#'     \item{\code{"pettitt"}}{Pettitt's rank test, distribution-free, for a
+#'       shift in location (approximate p-value).}
+#'     \item{\code{"supF"}}{Andrews' sup-F structural change test for a
+#'       change in mean, with 15\% trimming, through \pkg{strucchange}.}
+#'   }
+#' @param index Optional time index for a bare series.
+#' @return A tibble with one row: \code{method}, \code{statistic},
+#'   \code{p_value}, \code{location} (where the statistic peaks: the most
+#'   likely changepoint, reported for orientation only), \code{n} and
+#'   \code{selection_adjusted} (\code{TRUE}).
+#' @section Assumptions:
+#' All three assume independent observations. Under positive
+#' autocorrelation they reject too often, which is the same failure the
+#' detectors share; see \code{\link{cpt_assumptions}()}.
+#' @seealso \code{\link{cpt_null_power}()} for what an empty answer could
+#'   have detected, \code{\link{cpt_test_at}()} for a pre-specified date.
+#' @export
+#' @family inference
+#' @examplesIf requireNamespace("strucchange", quietly = TRUE)
+#' set.seed(1)
+#' cpt_test_null(rnorm(200))
+#' shifted <- c(rnorm(100), rnorm(100, 0.6))
+#' cpt_test_null(shifted, method = "pettitt")
+#' cpt_test_null(shifted, method = "supF")
+cpt_test_null <- function(x, method = c("cusum", "pettitt", "supF"),
+                          index = NULL) {
+  method <- cpt_match_arg(method)
+  observed <- NULL
+  if (is_ggcpt(x)) {
+    if (n_coordinates(x) > 1L) {
+      cpt_abort("`cpt_test_null()` tests one series; this fit has ",
+                n_coordinates(x), " coordinates.",
+                class = "wrong_dimension")
+    }
+    v <- x$data$value
+    idx <- x$index
+    # A fit made with `na_action = "omit"` keeps its gaps; the tests run on
+    # the observed values and the peak is reported in original positions.
+    if (anyNA(v)) {
+      observed <- which(!is.na(v))
+      v <- v[observed]
+      idx <- if (!is.null(idx)) idx[observed] else NULL
+    }
+  } else {
+    s <- as_cpt_series(x, index = index)
+    if (is.matrix(s$values) || is.data.frame(s$values)) {
+      cpt_abort("`cpt_test_null()` tests one series; `x` has several ",
+                "columns.", class = "wrong_dimension")
+    }
+    v <- as.numeric(s$values)
+    idx <- s$index
+  }
+  validate_data(v)
+  n <- length(v)
+  res <- if (is_constant(v)) {
+    # No variation, so nothing to test: CUSUM divided 0 by 0 and returned no
+    # row at all, and sup-F reported p = 1e-05 for a flat line.
+    list(method = switch(method, cusum = "CUSUM (Kolmogorov limit)",
+                         pettitt = "Pettitt rank test",
+                         supF = "sup-F (Andrews, 15% trimming)"),
+         statistic = 0, p_value = 1, location = NA_integer_)
+  } else {
+    switch(method,
+      cusum = cusum_test(v),
+      pettitt = pettitt_test(v),
+      supF = supf_test(v)
+    )
+  }
+  location <- as.integer(res$location)
+  if (!is.null(observed) && !is.na(location)) {
+    location <- observed[location]
+  }
+  out <- tibble::tibble(method = res$method, statistic = res$statistic,
+                        p_value = res$p_value, location = location,
+                        n = n, selection_adjusted = TRUE)
+  if (!is.null(idx) && is.finite(res$location)) {
+    out$location_index <- idx[res$location]
+  }
+  out
+}
+
+#' @noRd
+cusum_test <- function(v) {
+  n <- length(v)
+  sigma <- noise_sd(v)
+  s <- cumsum(v - mean(v))[-n]
+  stat_path <- abs(s) / (sigma * sqrt(n))
+  k <- which.max(stat_path)
+  stat <- if (is.finite(sigma) && sigma > 0) stat_path[k] else Inf
+  list(method = "CUSUM (Kolmogorov limit)", statistic = stat,
+       p_value = kolmogorov_tail(stat), location = k)
+}
+
+# Internal: P(sup |Brownian bridge| > x), the Kolmogorov distribution's
+# upper tail.
+#' @noRd
+kolmogorov_tail <- function(x) {
+  if (!is.finite(x)) return(0)
+  if (x <= 0) return(1)
+  j <- seq_len(100)
+  p <- 2 * sum((-1)^(j - 1) * exp(-2 * j^2 * x^2))
+  min(1, max(0, p))
+}
+
+#' @noRd
+pettitt_test <- function(v) {
+  n <- length(v)
+  r <- rank(v)
+  u <- 2 * cumsum(r) - seq_len(n) * (n + 1)
+  u <- u[-n]
+  k <- which.max(abs(u))
+  stat <- abs(u[k])
+  p <- min(1, 2 * exp(-6 * stat^2 / (n^3 + n^2)))
+  list(method = "Pettitt rank test", statistic = stat, p_value = p,
+       location = k)
+}
+
+#' @noRd
+supf_test <- function(v) {
+  need_pkg("strucchange")
+  # 15% trimming leaves no candidate break below 14 observations, and
+  # strucchange then widens its own window with two unclassed warnings.
+  if (length(v) < 14L) {
+    cpt_abort("The sup-F test trims 15% at each end, so it needs at least ",
+              "14 observations; `x` has ", length(v), ". Use `method = ",
+              "\"cusum\"` or `\"pettitt\"`.", class = "short_series",
+              data = list(n = length(v)))
+  }
+  d <- data.frame(.y = v)
+  fs <- strucchange::Fstats(.y ~ 1, data = d, from = 0.15)
+  tst <- strucchange::sctest(fs, type = "supF")
+  loc <- fs$breakpoint
+  list(method = "sup-F (Andrews, 15% trimming)",
+       statistic = unname(tst$statistic), p_value = unname(tst$p.value),
+       location = if (length(loc) == 1L && is.finite(loc)) as.integer(loc)
+       else NA_integer_)
+}
+
+#' What an empty answer could have detected
+#'
+#' When a detection comes back empty, the useful question is whether a
+#' change of the size you care about would have been found. This runs
+#' \code{\link{cpt_min_detectable}()} at the fit's own length, method and
+#' penalty, with the noise level estimated from the series, and reports the
+#' smallest shift detected with the requested power: changes smaller than
+#' that could well be there and missed.
+#'
+#' @param fit A \code{ggcpt} object (usually one with no changepoints; it
+#'   works for any).
+#' @param power Target power. Defaults to \code{0.8}.
+#' @param n_sim Simulations per power evaluation. Defaults to \code{50}.
+#' @param seed Optional seed, scoped to this call.
+#' @param ... Further arguments for \code{\link{cpt_min_detectable}()}.
+#' @return A \code{ggcpt_null_power} list with \code{n}, \code{sigma} (the
+#'   noise level used), \code{jump} (the smallest detectable change, in the
+#'   data's units), \code{jump_sd} (the same in noise standard deviations),
+#'   \code{change_in} (the fit's change type, which sets what \code{jump}
+#'   measures: a shift in the mean, a rise in the standard deviation, both,
+#'   or a trend, as \code{\link{cpt_power}()} defines them), \code{power},
+#'   \code{method} and \code{constant} (\code{TRUE} when the series has no
+#'   variation, in which case nothing is simulated). With \code{print()} and
+#'   \code{tidy()} methods. A formula fit is refused: the simulation has no
+#'   covariates to draw.
+#' @export
+#' @family inference
+#' @examples
+#' \donttest{
+#' set.seed(1)
+#' fit <- cpt_detect(rnorm(100), method = "pelt")
+#' cpt_null_power(fit, n_sim = 20, seed = 1)
+#' }
+cpt_null_power <- function(fit, power = 0.8, n_sim = 50, seed = NULL, ...) {
+  if (!is_ggcpt(fit)) {
+    cpt_abort("`fit` must be a ggcpt object.", class = "bad_argument")
+  }
+  v <- fit$data$value
+  n <- length(v)
+  method <- scalar_chr(fit$method)
+  out <- list(n = n, sigma = NA_real_, jump = NA_real_, jump_sd = NA_real_,
+              power = power, method = method, constant = is_constant(v))
+  if (out$constant) {
+    return(structure(out, class = "ggcpt_null_power"))
+  }
+  if (!bootstrap_possible(fit)) {
+    cpt_abort("`cpt_null_power()` simulates the detector, and `", method,
+              "` is not a method cpt_detect() knows.",
+              class = "capability_absent")
+  }
+  # The simulation has no covariates to draw, so for a formula fit it would
+  # measure an intercept-only shift in the response, in the response's raw
+  # spread: the power of a model the fit never used.
+  if (!rerun_matches_result(fit)) {
+    cpt_abort("`cpt_null_power()` simulates the detector on series without ",
+              "covariates, and this result was fitted from a formula, so the ",
+              "answer would describe an intercept-only model. Use ",
+              "cpt_power() with a series of your own design instead.",
+              class = "capability_absent")
+  }
+  dots <- list(...)
+  if (is.null(dots$penalty)) dots$penalty <- rerun_penalty(fit)
+  ci <- rerun_change_in(fit) %||% "mean"
+  if (!ci %in% c("mean", "var", "meanvar", "slope")) ci <- "mean"
+  family <- fit$family %||% "gaussian"
+  out$family <- family
+  out$change_in <- if (family %in% c("poisson", "binomial", "exponential")) {
+    "mean"
+  } else {
+    dots$change_in %||% ci
+  }
+  if (family %in% c("poisson", "binomial", "exponential")) {
+    # A count, binary or waiting-time fit is simulated in its own family,
+    # from its own level: in Gaussian units the answer was a "shift of 1.1
+    # sd" in a series of counts, for a detector the fit did not use.
+    base <- mean(v, na.rm = TRUE)
+    rng <- switch(family,
+      poisson = c(0.1, 5) * sqrt(max(base, 0.1)),
+      binomial = c(0.01, max(0.02, 0.99 - base)),
+      exponential = c(0.1, 5) * base)
+    args <- utils::modifyList(
+      list(n = n, method = method, power = power, n_sim = n_sim,
+           change_in = "mean", seed = seed, range = rng, family = family,
+           baseline = base), dots)
+    md <- do.call(cpt_min_detectable, args)
+    out$baseline <- base
+    out$jump <- md$jump
+  } else {
+    sigma <- noise_sd(v)
+    args <- utils::modifyList(
+      list(n = n, sigma = sigma, method = method, power = power,
+           n_sim = n_sim, change_in = ci, seed = seed), dots)
+    md <- do.call(cpt_min_detectable, args)
+    # cpt_min_detectable() works in units of `sigma`.
+    out$sigma <- sigma
+    out$jump_sd <- md$jump
+    out$jump <- md$jump * sigma
+    if (!family %in% "gaussian") {
+      md$note <- paste0("The fit's family (", family, ") is not one ",
+                        "cpt_power() simulates, so this is the answer for ",
+                        "Gaussian noise. ", md$note %||% "")
+    }
+  }
+  out$note <- md$note
+  structure(out, class = "ggcpt_null_power")
+}
+
+#' @rdname cpt_null_power
+#' @param x A \code{ggcpt_null_power} object.
+#' @export
+print.ggcpt_null_power <- function(x, ...) {
+  cat("ggcpt_null_power (method: ", x$method, ", n = ", x$n, ")\n", sep = "")
+  if (isTRUE(x$constant)) {
+    cat("The series is constant: there is no variation, so there is nothing",
+        "to detect and\nno power to compute.\n")
+    return(invisible(x))
+  }
+  if (is.na(x$jump)) {
+    cat("No change in the range searched reached power ", x$power, ": ",
+        x$note %||% "", "\n", sep = "")
+    return(invisible(x))
+  }
+  if (!is.null(x$baseline)) {
+    what <- switch(x$family, poisson = "rate", binomial = "probability",
+                   exponential = "mean waiting time")
+    cat("At this length, a single change in the ", what, " from ",
+        format(signif(x$baseline, 3)), " to ",
+        format(signif(x$baseline + x$jump, 3)), " is detected with power ",
+        x$power, ".\nA smaller change could be present and missed.\n",
+        sep = "")
+    return(invisible(x))
+  }
+  # `jump_sd` is cpt_power()'s `jump`, whose meaning depends on the change
+  # type; every one of them used to be printed as a shift in the mean.
+  sg <- function(v) format(signif(v, 3))
+  what <- switch(x$change_in %||% "mean",
+    var = paste0("a rise in the noise standard deviation from ", sg(x$sigma),
+                 " to about ", sg(x$sigma * (1 + x$jump_sd)), " (a factor of ",
+                 sg(1 + x$jump_sd), ")"),
+    meanvar = paste0("a shift in the mean of about ", sg(x$jump), " (",
+                     sg(x$jump_sd), " sd) with the standard deviation rising ",
+                     "by a factor of ", sg(1 + x$jump_sd / 2)),
+    slope = paste0("a trend rising by about ", sg(x$jump), " (",
+                   sg(x$jump_sd), " sd) over the series"),
+    paste0("a single shift of about ", sg(x$jump), " (", sg(x$jump_sd),
+           " sd)"))
+  cat("At this length and noise level (sd ", sg(x$sigma), "), ", what,
+      " is\ndetected with power ", x$power, ". A smaller change could be ",
+      "present and missed.\n", sep = "")
+  if (!is.null(x$note) && nzchar(x$note)) cat(x$note, "\n")
+  invisible(x)
+}
+
+#' @rdname cpt_null_power
+#' @export
+tidy.ggcpt_null_power <- function(x, ...) {
+  tibble::tibble(method = x$method, n = x$n,
+                 change_in = x$change_in %||% "mean",
+                 family = x$family %||% "gaussian",
+                 baseline = x$baseline %||% NA_real_,
+                 sigma = x$sigma, jump = x$jump, jump_sd = x$jump_sd,
+                 power = x$power, constant = isTRUE(x$constant))
+}

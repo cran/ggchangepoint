@@ -56,7 +56,7 @@
 trend_wrapper <- function(x, test = c("pettitt", "buishand", "snht"),
                           alpha = 0.05, ...) {
   need_pkg("trend")
-  test <- match.arg(test)
+  test <- cpt_match_arg(test)
   validate_scalar(alpha, "alpha", min = 0, max = 1,
                   min_open = TRUE, max_open = TRUE)
   validate_data(x)
@@ -71,12 +71,12 @@ trend_wrapper <- function(x, test = c("pettitt", "buishand", "snht"),
   if (test %in% c("buishand", "snht")) {
     sd_x <- stats::sd(data_vec)
     if (!is.finite(sd_x) || sd_x == 0) {
-      stop("`", test, "` standardises by the series' standard deviation, ",
-           "which is 0 here: every one of the ", length(data_vec),
-           " observations is identical, so the test statistic is undefined ",
-           "rather than merely insignificant. `test = \"pettitt\"` is ",
-           "rank-based and reports no changepoint on a constant series.",
-           call. = FALSE)
+      cpt_abort("`", test, "` standardises by the series' standard deviation, ",
+                "which is 0 here: every one of the ", length(data_vec),
+                " observations is identical, so the test statistic is undefined ",
+                "rather than merely insignificant. `test = \"pettitt\"` is ",
+                "rank-based and reports no changepoint on a constant series.",
+                class = "input_error")
     }
   }
 
@@ -176,14 +176,24 @@ taylor_wrapper <- function(x, n_bootstraps = 1000, min_candidate_conf = 0.5,
 
   # The engine narrates ("3 Change(s) Identified", "NA supplied to 'label'")
   # through both stdout and the message stream; keep the console clean.
+  # And when a candidate set comes back empty (seen on the stretch before a
+  # `fixed` changepoint) its summarise() of `max(change_conf)` warns "no
+  # non-missing arguments to max" about a table it then discards.
   suppressMessages(utils::capture.output(
-    fit <- engine_short_series(
-      ChangePointTaylor::change_point_analyzer(
-        data_vec, n_bootstraps = n_bootstraps,
-        min_candidate_conf = min_candidate_conf,
-        min_tbl_conf = min_conf, CI = conf_level
-      ),
-      "taylor", length(data_vec))
+    fit <- withCallingHandlers(
+      engine_short_series(
+        ChangePointTaylor::change_point_analyzer(
+          data_vec, n_bootstraps = n_bootstraps,
+          min_candidate_conf = min_candidate_conf,
+          min_tbl_conf = min_conf, CI = conf_level
+        ),
+        "taylor", length(data_vec)),
+      warning = function(w) {
+        if (grepl("no non-missing arguments to max", conditionMessage(w),
+                  fixed = TRUE)) {
+          invokeRestart("muffleWarning")
+        }
+      })
   ))
   if (is.null(fit) || nrow(fit) == 0) {
     return(ggcpt_build(data_vec, integer(0), method = "taylor",
@@ -286,11 +296,12 @@ bfast_wrapper <- function(x, frequency = 12,
   # message about the seasonal frequency, which says more than a range
   # complaint would. This catches NA, a string and a length-2 vector.
   validate_scalar(frequency, "frequency")
-  change_in <- match.arg(change_in)
-  season <- match.arg(season)
+  change_in <- cpt_match_arg(change_in)
+  season <- cpt_match_arg(season)
   if (change_in == "seasonality" && season == "none") {
-    stop("`change_in = \"seasonality\"` needs a seasonal component to break: ",
-         "use season = \"harmonic\" or season = \"dummy\".", call. = FALSE)
+    cpt_abort("`change_in = \"seasonality\"` needs a seasonal component to ",
+               "break: ", "use season = \"harmonic\" or season = \"dummy\".",
+              class = "unsupported")
   }
   validate_scalar(h, "h", min = 0, max = 0.5, min_open = TRUE)
   validate_scalar(max_iter, "max_iter", min = 1)
@@ -304,9 +315,10 @@ bfast_wrapper <- function(x, frequency = 12,
   data_vec <- as.numeric(yt)
   n <- length(data_vec)
   if (stats::frequency(yt) < 2 && season != "none") {
-    stop("`bfast` needs a seasonal frequency of at least 2 to fit a seasonal ",
-         "component; pass a `ts` with the right frequency, set `frequency`, ",
-         "or use `season = \"none\"`.", call. = FALSE)
+    cpt_abort("`bfast` needs a seasonal frequency of at least 2 to fit a ",
+               "seasonal ", "component; pass a `ts` with the right frequency, ",
+               "set `frequency`, ", "or use `season = \"none\"`.",
+              class = "bad_argument")
   }
   # A constant series has neither a trend nor a season to decompose, and
   # bfast's iteration answers that with base R's "missing value where
@@ -390,7 +402,8 @@ wbs_lsw_replay <- function(y, n_intervals, cstar, lambda, scales) {
     scales <- sort(scales, decreasing = TRUE)
   }
   if (length(scales) == 1) {
-    stop(".........Choose at least two scales.........", call. = FALSE)
+    cpt_abort(".........Choose at least two scales.........",
+              class = "short_series")
   }
   epp <- vapply(seq_along(scales), function(j) {
     round(max(2 * n / 2^scales[j], ceiling(sqrt(n) / 2)))
@@ -476,20 +489,21 @@ wbsts_wrapper <- function(x, n_intervals = 0, cstar = 0.75, lambda = 0.75,
   if (is.null(scales)) {
     n_scales <- floor(3 * lambda * log(log(length(data_vec))))
     if (n_scales > J - 1) {
-      stop("`lambda = ", format(lambda), "` asks for ", n_scales,
-           " wavelet scales, but a series of ", length(data_vec),
-           " has only ", J - 1, " (floor(log2(n)) - 1). Lower `lambda` ",
-           "(the default is 0.75) or pass `scales` directly.", call. = FALSE)
+      cpt_abort("`lambda = ", format(lambda), "` asks for ", n_scales,
+                " wavelet scales, but a series of ", length(data_vec),
+                " has only ", J - 1, " (floor(log2(n)) - 1). Lower `lambda` ",
+                "(the default is 0.75) or pass `scales` directly.",
+                class = "short_series")
     }
   }
   if (!is.null(scales)) {
     if (!is.numeric(scales) || length(unique(scales)) < 2L ||
         any(!is.finite(scales)) || any(scales != round(scales)) ||
         any(scales < 1) || any(scales > J - 1)) {
-      stop("`scales` must be at least two different whole numbers from 1 ",
-           "to ", J - 1, " (floor(log2(n)) - 1 for n = ", length(data_vec),
-           "); got ", paste(format(scales), collapse = ", "), ".",
-           call. = FALSE)
+      cpt_abort("`scales` must be at least two different whole numbers from 1 ",
+                "to ", J - 1, " (floor(log2(n)) - 1 for n = ", length(data_vec),
+                "); got ", paste(format(scales), collapse = ", "), ".",
+                class = "bad_argument")
     }
   }
   local_seed(seed)
@@ -549,12 +563,13 @@ wbsts_wrapper <- function(x, n_intervals = 0, cstar = 0.75, lambda = 0.75,
                 conditionMessage(e), fixed = TRUE)) {
         runs <- rle(as.numeric(data_vec))$lengths
         if (max(runs) >= 2L) {
-          stop("`wbsts` could not build a wavelet spectrum for this ",
-               "series. Its longest run of identical values is ",
-               max(runs), " of ", length(data_vec), " observations, which ",
-               "leaves a scale with no variation. Jitter the ties, or use ",
-               "a method that does not decompose by scale (`pelt`, ",
-               "`binseg`, `wbs`).", call. = FALSE)
+          cpt_abort("`wbsts` could not build a wavelet spectrum for this ",
+                    "series. Its longest run of identical values is ",
+                    max(runs), " of ", length(data_vec), " observations, ",
+                     "which ", "leaves a scale with no variation. Jitter the ",
+                     "ties, or use ", "a method that does not decompose by ",
+                     "scale (`pelt`, ", "`binseg`, `wbs`).",
+                    class = "input_error")
         }
       }
       if (!grepl("the condition has length", conditionMessage(e),
@@ -609,8 +624,10 @@ wbsts_wrapper <- function(x, n_intervals = 0, cstar = 0.75, lambda = 0.75,
 #'   \code{min(20, floor(n / 5))}.
 #' @param n_segments Number of segments to report. When \code{NULL} (the
 #'   default) it is chosen by BIC over the nested family the engine returns.
-#' @param min_segment_length Minimum segment length. Passed through when
-#'   supplied.
+#' @param min_segment_length Minimum segment length. Defaults to \code{2}
+#'   for the single-parameter costs (\code{mean_norm}, \code{poisson},
+#'   \code{l1}), whose engine default allows one-observation segments, and
+#'   to the engine's own default otherwise.
 #' @return A \code{ggcpt} object.
 #' @references
 #' \insertRef{hocking2024binsegrcpp}{ggchangepoint}
@@ -624,7 +641,7 @@ binsegrcpp_wrapper <- function(x, change_in = c("mean", "meanvar"),
                                n_segments = NULL,
                                min_segment_length = NULL) {
   need_pkg("binsegRcpp")
-  change_in <- match.arg(change_in)
+  change_in <- cpt_match_arg(change_in)
   validate_data(x)
   data_vec <- as_uni_vector(x, "binsegrcpp")
   n <- length(data_vec)
@@ -637,17 +654,40 @@ binsegrcpp_wrapper <- function(x, change_in = c("mean", "meanvar"),
     distribution <- switch(change_in, mean = "mean_norm",
                            meanvar = "meanvar_norm")
   }
-  if (is.null(max_segments)) {
+  user_max <- !is.null(max_segments)
+  if (!user_max) {
     max_segments <- max(2L, min(20L, floor(n / 5)))
   }
   validate_scalar(max_segments, "max_segments", min = 2)
   max_segments <- min(as.integer(max_segments), n)
 
-  args <- list(distribution.str = distribution, data.vec = data_vec,
-               max.segments = max_segments)
-  if (!is.null(min_segment_length)) {
-    args$min.segment.length <- as.integer(min_segment_length)
+  args <- list(distribution.str = distribution, data.vec = data_vec)
+  # The single-parameter costs allow one-observation segments by default;
+  # a floor of two, as cpt_wrapper() applies for a change in mean.
+  if (is.null(min_segment_length) &&
+      distribution %in% c("mean_norm", "poisson", "l1") && n >= 4L) {
+    min_segment_length <- 2L
   }
+  if (!is.null(min_segment_length)) {
+    validate_scalar(min_segment_length, "min_segment_length", min = 1)
+    args$min.segment.length <- as.integer(min_segment_length)
+    # The engine needs room for every segment it may try: max_segments of
+    # at least min_segment_length each. The default of 20 does not fit a
+    # longer minimum, and `cpt_detect(min_segment = 15)` on 188
+    # observations failed with "too many segments ... would require at
+    # least 300 data", so the default now shrinks to what fits.
+    fits <- max(1L, as.integer(floor(n / args$min.segment.length)))
+    if (!user_max) {
+      max_segments <- min(max_segments, fits)
+    } else if (max_segments > fits) {
+      cpt_abort("`max_segments = ", max_segments, "` segments of at least ",
+                args$min.segment.length, " observations need ",
+                max_segments * args$min.segment.length, ", and the series ",
+                "has ", n, ". Lower `max_segments` to at most ", fits,
+                " or shorten `min_segment_length`.", class = "bad_argument")
+    }
+  }
+  args$max.segments <- max_segments
   # binsegRcpp warns "some consecutive data values are identical in
   # set=subtrain, so you could get speedups by converting your data to use a
   # run-length encoding" whenever the series has any ties -- a constant
@@ -671,11 +711,23 @@ binsegrcpp_wrapper <- function(x, change_in = c("mean", "meanvar"),
 
   if (is.null(n_segments)) {
     # The engine returns the whole nested family; pick the BIC-optimal rung
-    # rather than the largest, which would always be max_segments.
+    # rather than the largest, which would always be max_segments. The
+    # loss means different things by distribution (binsegRcpp's own
+    # get_distribution_info()): a residual sum of squares for `mean_norm`,
+    # a total absolute deviation for `l1`, and a negative log likelihood for
+    # `meanvar_norm`, `poisson` and `laplace`. The criterion has to follow:
+    # `n log(loss / n)` is the profiled Gaussian (or Laplace) likelihood of
+    # the first two, and applied to a negative log likelihood, which can be
+    # negative, it chose nonsense (on Poisson counts with a rate change it
+    # chose no change at all).
     loss <- as.numeric(splits$loss)
     k <- as.integer(splits$segments)
-    bic <- n * log(pmax(loss, .Machine$double.eps) / n) + (2 * (k - 1) + 1) *
-      log(n)
+    bic <- switch(distribution,
+      mean_norm = , l1 = n * log(pmax(loss, .Machine$double.eps) / n) +
+        (2 * (k - 1) + 1) * log(n),
+      poisson = 2 * loss + (2 * k - 1) * log(n),
+      2 * loss + (3 * k - 1) * log(n)
+    )
     n_segments <- k[which.min(bic)]
   }
   validate_scalar(n_segments, "n_segments", min = 1)
@@ -687,13 +739,22 @@ binsegrcpp_wrapper <- function(x, change_in = c("mean", "meanvar"),
   ends <- as.integer(splits$end[seq_len(n_segments)])
   cp <- sort(unique(ends[ends < n]))
 
-  ggcpt_build(
+  # What changes follows the cost, not the `change_in` default: `laplace`
+  # changes the median and the scale, the other single-parameter costs one
+  # location.
+  change_lab <- switch(distribution, meanvar_norm = , laplace = "meanvar",
+                       "mean")
+  res <- ggcpt_build(
     data_vec, cp,
     method = "binsegrcpp",
-    change_in = change_in,
+    change_in = change_lab,
     penalty = list(type = "BIC over nested family",
                    value = as.numeric(n_segments)),
     fit = fit,
     call = match.call()
   )
+  fam <- switch(distribution, poisson = "poisson", laplace = "laplace",
+                l1 = "l1", NULL)
+  if (!is.null(fam)) res$family <- fam
+  res
 }

@@ -4,7 +4,12 @@
 \alias{cpt_test}
 \title{Test detected changepoints}
 \usage{
-cpt_test(object, type = c("jump", "segment"), correction = "none")
+cpt_test(
+  object,
+  type = c("jump", "segment"),
+  correction = "none",
+  relevance = NULL
+)
 }
 \arguments{
 \item{object}{A \code{ggcpt} object.}
@@ -17,6 +22,14 @@ segment differ from the one before it?).}
 of the \code{\link[stats]{p.adjust}} methods (\code{"none"},
 \code{"bonferroni"}, \code{"holm"}, \code{"BH"}, ...). Defaults to
 \code{"none"}; a \code{p_adjusted} column is added when it is not.}
+
+\item{relevance}{Optional smallest change worth acting on, in noise
+standard deviations. The null hypothesis becomes "the change is no
+larger than \code{relevance}" rather than "there is no change", so a
+statistically detectable but practically negligible shift is not
+significant. Applies to the Welch route (the changepoints of a series
+fit); the \code{p_value} column is then the relevance test's, and a
+\code{relevance} column records the threshold in the data's units.}
 }
 \value{
 A tibble with columns \code{cp} (or \code{seg_id}),
@@ -52,7 +65,13 @@ records, per row, whether the test accounts for that:
     compares the segments either side of the changepoint as if the
     location had been fixed in advance. Useful as a descriptive effect
     size with a scale attached; not a valid significance test for the
-    existence of the change.
+    existence of the change. The exception is a changepoint that
+    \emph{was} fixed in advance, through \code{cpt_detect(fixed = )}:
+    its row is \code{TRUE}.
+  \item The fallback compares means whatever the fit detected, so on a
+    fit of a change in variance, slope or distribution it tests a
+    different change from the one found, and warns (class
+    \code{ggchangepoint_assumption}).
   \item \code{FALSE} for \pkg{strucchange}'s route as well, which is
     the Chow F evaluated \emph{at} each estimated break date. The Chow
     statistic's reference distribution assumes the date was fixed in

@@ -211,8 +211,40 @@ test_that("an engine CRAN no longer serves is declared where it comes from", {
     ggchangepoint:::install_hint("fpop"),
     "install.packages('fpop', repos = 'https://R-Forge.R-project.org')"
   )
+  # ocp, archived 2026-10-12, has no home but the package website's
+  # repository of archived engines.
+  expect_identical(
+    ggchangepoint:::install_hint("ocp"),
+    paste0("install.packages('ocp', repos = ",
+           "'https://pursuitofdatascience.github.io/ggchangepoint/repo')")
+  )
   expect_identical(ggchangepoint:::install_hint("wbs"),
                    "install.packages('wbs')")
+})
+
+test_that("cpt_install_engines() fetches ocp from the package website", {
+  calls <- list()
+  local_mocked_bindings(
+    engine_installed = function(pkg) FALSE,
+    install_packages = function(pkgs, ...) {
+      calls[[length(calls) + 1]] <<- list(pkgs = pkgs, repos = list(...)$repos)
+      invisible(NULL)
+    }
+  )
+  expect_warning(cpt_install_engines("bayesian", repos = "https://example.org"),
+                 "still not installed")
+  from_site <- Filter(function(cl) "ocp" %in% cl$pkgs, calls)
+  expect_length(from_site, 1)
+  expect_identical(from_site[[1]]$pkgs, "ocp")
+  # The website first, then the caller's repositories for anything ocp needs.
+  expect_identical(
+    unname(from_site[[1]]$repos),
+    c("https://pursuitofdatascience.github.io/ggchangepoint/repo",
+      "https://example.org"))
+  rest <- Filter(function(cl) !"ocp" %in% cl$pkgs, calls)
+  expect_length(rest, 1)
+  expect_true(all(c("bcp", "Rbeast") %in% rest[[1]]$pkgs))
+  expect_identical(rest[[1]]$repos, "https://example.org")
 })
 
 test_that("cpt_install_engines() fetches fpop from R-Forge, the rest as asked", {
@@ -683,7 +715,7 @@ test_that("an engine argument the wrapper renames redirects to the right name", 
     list(m = "fabisearch",  eng = "fabisearch",    a = "nruns",         use = "n_runs"),
     list(m = "bfast",       eng = "bfast",         a = "max.iter",      use = "max_iter"),
     list(m = "ocd",         eng = "ocd",           a = "dim",           use = NA),
-    list(m = "segmented",   eng = "segmented",     a = "seg.Z",         use = NA)
+    list(m = "segmented",   eng = "segmented",     a = "seg.Z",         use = "seg_z")
   )
   # How many of these cases can run here at all. Asserting a fixed minimum
   # instead ("tested > 5") is what broke the R-devel run: against an

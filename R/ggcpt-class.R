@@ -202,13 +202,55 @@ print.ggcpt <- function(x, ...) {
   if (!is.null(x$index)) {
     cat_field("Index", format_index_range(x$index))
   }
+  if (!is.null(x$family)) {
+    cat_field("Family", x$family)
+  }
+  if (!is.null(x$diagnostics$na_omitted)) {
+    cat_field("Missing values", paste0(
+      length(x$diagnostics$na_omitted$positions), " omitted; locations ",
+      "are in the original positions"))
+  }
+  if (!is.null(x$constraints$fixed)) {
+    cat_field("Fixed", paste(x$constraints$fixed, collapse = ", "))
+  }
+  # The other constraints change what is reported too, and said nothing:
+  # a fit made with `within` printed its one changepoint without a word
+  # about the ones it dropped.
+  cons <- x$constraints
+  if (!is.null(cons$within) && length(cons$within)) {
+    w <- as.matrix(cons$within)
+    out <- length(cons$dropped_outside_within)
+    cat_field("Within", paste0(paste(w[, 1], w[, 2], sep = "-",
+                                     collapse = ", "),
+                               if (out) paste0(" (", out, " found outside, ",
+                                               "dropped)")))
+  }
+  if (!is.null(cons$min_segment)) {
+    cat_field("Minimum segment", format(cons$min_segment))
+  }
+  if (!is.null(cons$min_effect)) {
+    small <- length(cons$dropped_below_min_effect)
+    cat_field("Minimum effect", paste0(format(cons$min_effect),
+                                       " noise sd", if (small) {
+                                         paste0(" (", small, " smaller ",
+                                                "dropped)")
+                                       }))
+  }
+  drift <- version_drift(x)
+  if (!is.null(drift)) {
+    cat_field("Engine version", drift)
+  }
   if (nrow(x$changepoints) > 0) {
     cat("\nChangepoints:\n")
     print(x$changepoints, n = 10)
   } else {
-    cat("\nNo changepoints detected.\n")
+    cat("\n", empty_answer_note(x), "\n", sep = "")
   }
-  if (!is.null(x$regions)) {
+  if (!is.null(x$regions) && identical(x$region_kind, "anomaly")) {
+    cat("\nAnomalous windows (collective: a stretch away from the baseline; ",
+        "point: a single\noutlier):\n", sep = "")
+    print(x$regions, n = 10)
+  } else if (!is.null(x$regions)) {
     cat("\nSignificance regions (each contains at least one changepoint",
         if (!is.null(x$region_level)) {
           paste0(" at global level ", format(x$region_level))
@@ -230,16 +272,43 @@ print.ggcpt <- function(x, ...) {
   invisible(x)
 }
 
+# Internal: what an empty result means. A constant series and a series in
+# which the detector looked and found nothing are different situations
+# with different next steps, and "No changepoints detected." alone said
+# the same thing about both: a stuck sensor got the answer that means
+# "nothing happened".
+#' @noRd
+empty_answer_note <- function(x) {
+  v <- x$data$value
+  if (is_constant(v)) {
+    return(paste0("No changepoints detected: the series is constant (no ",
+                  "variation at all), so there is nothing to detect. A ",
+                  "flat series is often a stuck sensor or a filled gap ",
+                  "rather than a stable process."))
+  }
+  paste0("No changepoints detected. That means either the series is ",
+         "stable or a change was too small to see at this length and ",
+         "noise level: cpt_null_power(fit) gives the smallest shift this ",
+         "analysis would have found, and cpt_test_null(fit) tests for a ",
+         "change anywhere.")
+}
+
 # Internal: a compact "first to last" description of a time index for
 # print(). Dates and datetimes format themselves sensibly; numeric indices
 # are rounded rather than shown at full precision.
 #' @noRd
 format_index_range <- function(idx) {
   if (length(idx) == 0) return("(empty)")
-  fmt <- function(v) {
-    if (inherits(v, c("Date", "POSIXct", "POSIXt"))) return(format(v))
-    if (is.numeric(v)) return(format(v, digits = 6))
-    as.character(v)
+  ends <- idx[c(1L, length(idx))]
+  # Both ends in one format() call: formatted apart, a timestamp at
+  # midnight lost its time of day while the other end kept it
+  # ("2020-03-07 to 2020-03-15 08:00:00").
+  f <- if (inherits(ends, c("Date", "POSIXct", "POSIXt"))) {
+    format(ends)
+  } else if (is.numeric(ends)) {
+    vapply(ends, format, character(1), digits = 6)
+  } else {
+    as.character(ends)
   }
-  paste0(fmt(idx[1]), " to ", fmt(idx[length(idx)]))
+  paste0(f[1], " to ", f[2])
 }

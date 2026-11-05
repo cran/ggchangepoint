@@ -34,6 +34,13 @@
 #'       \strong{Multivariate only}: it tracks a projection of the whole
 #'       vector and needs at least two coordinates, so it refuses a single
 #'       series rather than falling back to a univariate statistic.}
+#'     \item{\code{"cusum"}}{a two-sided tabular CUSUM control chart
+#'       (Page 1954) on the standardised stream, with reference value
+#'       \code{k} and its decision interval calibrated to \code{arl0}.
+#'       Implemented in this package; see the section on control charts.}
+#'     \item{\code{"ewma"}}{an EWMA control chart (Roberts 1959) with
+#'       smoothing \code{lambda} and limits calibrated to \code{arl0}.
+#'       Implemented in this package.}
 #'   }
 #' @param baseline A numeric vector (or, for \code{"ocd"}, a matrix with rows
 #'   as time points) of pre-change training data used to estimate the
@@ -44,8 +51,8 @@
 #'   average run length under the null is at least \code{1 / alpha}, by
 #'   optional stopping on the martingale \eqn{M_t - t} (see Details).
 #'   Defaults to \code{0.01}.
-#' @param arl0 Target in-control average run length for \code{"cpm"}.
-#'   Defaults to \code{500}.
+#' @param arl0 Target in-control average run length for \code{"cpm"},
+#'   \code{"cusum"} and \code{"ewma"}. Defaults to \code{500}.
 #' @param cpm_type Statistic for \code{"cpm"}. Defaults to
 #'   \code{"Mann-Whitney"}.
 #' @param patience Target patience (average run length) for \code{"ocd"}.
@@ -75,7 +82,42 @@
 #'   at the default \code{patience}), so pass thresholds directly when you
 #'   already have them, or lower \code{mc_reps} while exploring.
 #' @param mc_reps Monte Carlo repetitions for the \code{"ocd"} threshold.
-#' @param ... Additional arguments passed to the engine's constructor.
+#' @param ... Additional arguments passed to the engine's constructor
+#'   (\code{"cpm"} and \code{"ocd"}; the three native monitors take none).
+#' @param k CUSUM reference value, in baseline standard deviations: half
+#'   the shift the chart is tuned to detect fastest. Defaults to \code{0.5}
+#'   (a one-standard-deviation shift).
+#' @param lambda EWMA smoothing weight on the newest observation, in (0, 1].
+#'   Defaults to \code{0.2}; smaller values detect small shifts sooner and
+#'   large ones later.
+#' @param limit Optional control limit, overriding the calibration to
+#'   \code{arl0}: the CUSUM decision interval \eqn{h}, or the EWMA limit
+#'   multiplier \eqn{L}, both in baseline standard deviations.
+#'
+#' @section Control charts:
+#' \code{"cusum"} and \code{"ewma"} are the two charts statistical process
+#' control runs, and they are sequential changepoint detectors under
+#' another name. Each standardises the stream by the baseline's mean and
+#' standard deviation (Phase I; the baseline should be in control) and
+#' then monitors it (Phase II). The CUSUM keeps \eqn{S_t^+ =
+#' \max(0, S_{t-1}^+ + z_t - k)} and \eqn{S_t^- = \max(0, S_{t-1}^- - z_t -
+#' k)} and alarms when either reaches \eqn{h}; the EWMA keeps \eqn{z_t =
+#' \lambda x_t + (1 - \lambda) z_{t-1}} and alarms when it leaves \eqn{\pm L
+#' \sqrt{\lambda / (2 - \lambda)}}. The limit is solved for \code{arl0} by
+#' the Markov-chain approximation of the run length (Brook and Evans 1972;
+#' Lucas and Saccucci 1990), which reproduces the published tables: a CUSUM
+#' with \code{k = 0.5} and \eqn{h = 4} or 5 has in-control run lengths of
+#' 168 and 465, and an EWMA with \code{lambda = 0.1} and \eqn{L = 2.814}
+#' one of 500. Measured through this function with a 5,000-observation
+#' baseline and \code{arl0 = 100}, the first alarm on in-control data came
+#' after 99.4 observations on average for the CUSUM and 99.8 for the EWMA
+#' (400 runs each, standard errors about 5). The calibration treats the
+#' baseline's mean and standard deviation as exact, so a short baseline
+#' shortens the in-control run length: a few hundred observations is a
+#' reasonable minimum. Rational subgroups, run rules and capability indices are not
+#' modelled; for a formal quality-control programme use a dedicated
+#' package such as \pkg{qcc}. \code{autoplot(plot_type = "control_chart")}
+#' draws the chart.
 #'
 #' @section The e-detector, and why it is implemented rather than wrapped:
 #' Shin, Ramdas and Rinaldo (2023) give a nonparametric sequential framework
@@ -97,9 +139,10 @@
 #' asymptotics and no calibration run. A convex combination of e-detectors
 #' is an e-detector; a \emph{maximum} of them is not, and taking one
 #' silently multiplies the false-alarm rate by roughly the number of shifts
-#' mixed over. Every other detector in this package wraps published,
-#' separately maintained code; this one does not, and is labelled as such
-#' wherever it appears.
+#' mixed over. Apart from it and the two textbook control charts below,
+#' every detector in this package wraps published, separately maintained
+#' code; the three native monitors are labelled as such wherever they
+#' appear.
 #'
 #' @return A \code{ggcpt_monitor} object: a list carrying the detector's
 #'   state between calls, so it is meant to be passed to
@@ -130,6 +173,14 @@
 #'   }
 #' @references
 #' \insertRef{shin2023edetectors}{ggchangepoint}
+#'
+#' \insertRef{page1954continuous}{ggchangepoint}
+#'
+#' \insertRef{roberts1959ewma}{ggchangepoint}
+#'
+#' \insertRef{brook1972arl}{ggchangepoint}
+#'
+#' \insertRef{lucas1990ewma}{ggchangepoint}
 #' @seealso \code{\link{cpt_update}()}, \code{\link{alarms}()},
 #'   \code{\link{cpt_replay}()}, \code{\link{cpt_delay}()}.
 #' @export
@@ -139,12 +190,14 @@
 #' mon <- cpt_update(mon, rnorm(50))          # still in control
 #' mon <- cpt_update(mon, rnorm(50, 3))       # a change arrives
 #' alarms(mon)
-cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
+cpt_monitor <- function(method = c("edetector", "cpm", "ocd", "cusum",
+                                   "ewma"),
                         baseline = NULL, alpha = 0.01, arl0 = 500,
                         cpm_type = "Mann-Whitney", patience = 5000,
                         deltas = c(0.5, 1, 2), reset = TRUE, relearn = 20,
-                        thresh = "MC", mc_reps = 100, ...) {
-  method <- match.arg(method)
+                        thresh = "MC", mc_reps = 100, ..., k = 0.5,
+                        lambda = 0.2, limit = NULL) {
+  method <- cpt_match_arg(method)
 
   # The three detectors are calibrated in different currencies and each
   # ignores the others': setting `arl0` on an e-detector, or `alpha` on
@@ -152,20 +205,23 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
   # say so, which does not help the user who set one and is now reading an
   # unchanged answer. Only an argument the caller supplied is reported --
   # the defaults supply all of them.
-  governs <- c(alpha = "edetector", deltas = "edetector",
-               arl0 = "cpm", cpm_type = "cpm",
-               patience = "ocd", thresh = "ocd", mc_reps = "ocd")
+  governs <- list(alpha = "edetector", deltas = "edetector",
+                  arl0 = c("cpm", "cusum", "ewma"), cpm_type = "cpm",
+                  patience = "ocd", thresh = "ocd", mc_reps = "ocd",
+                  k = "cusum", lambda = "ewma", limit = c("cusum", "ewma"))
   supplied <- c(alpha = !missing(alpha), deltas = !missing(deltas),
                 arl0 = !missing(arl0), cpm_type = !missing(cpm_type),
                 patience = !missing(patience), thresh = !missing(thresh),
-                mc_reps = !missing(mc_reps))
-  ignored <- names(governs)[supplied[names(governs)] & governs != method]
+                mc_reps = !missing(mc_reps), k = !missing(k),
+                lambda = !missing(lambda), limit = !is.null(limit))
+  tunes <- vapply(governs, function(g) method %in% g, logical(1))
+  ignored <- names(governs)[supplied[names(governs)] & !tunes]
   if (length(ignored) > 0) {
-    warning("`", paste(ignored, collapse = "`, `"), "` ",
-            if (length(ignored) > 1) "do" else "does",
-            " not affect `method = \"", method, "\"`, which is tuned by `",
-            paste(names(governs)[governs == method], collapse = "`, `"),
-            "`. See ?cpt_monitor.", call. = FALSE)
+    cpt_warn("`", paste(ignored, collapse = "`, `"), "` ",
+             if (length(ignored) > 1) "do" else "does", " not affect `method ",
+              "= \"", method, "\"`, which is tuned by `",
+             paste(names(governs)[tunes], collapse = "`, `"),
+             "`. See ?cpt_monitor.", class = "argument_ignored")
   }
 
   # `...` reaches cpm::processStream() or ocd::ChangepointDetector(), and
@@ -191,19 +247,31 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
   # for `deltas`, this function's own arithmetic) unvalidated: `deltas = 0`
   # makes every `inc` exactly 1, so `R` grows LINEARLY whatever the data
   # does and the monitor alarms at t = 1/alpha on pure noise.
+  if (method %in% c("cusum", "ewma") && length(list(...)) > 0) {
+    extra <- names(list(...))
+    cpt_warn("`method = \"", method, "\"` is native to this package and ",
+             "takes no engine arguments, so ",
+             if (length(extra) && all(nzchar(extra))) {
+               paste0("`", paste(extra, collapse = "`, `"), "` ")
+             } else {
+               paste0(length(list(...)), " unnamed argument(s) ")
+             }, "would be ignored. It is tuned by `arl0`, `",
+             if (method == "cusum") "k" else "lambda", "` and `limit`.",
+             class = "argument_ignored")
+  }
   if (identical(method, "edetector")) {
     if (!is.numeric(deltas) || length(deltas) == 0L ||
         any(!is.finite(deltas)) || all(deltas == 0)) {
-      stop("`deltas` must be one or more finite non-zero numbers: the shift ",
-           "sizes, in baseline standard deviations, the e-detector mixes ",
-           "over. A zero shift contributes a likelihood ratio of exactly 1 ",
-           "at every observation, so the statistic grows on nothing.",
-           call. = FALSE)
+      cpt_abort("`deltas` must be one or more finite non-zero numbers: the ",
+                 "shift ", "sizes, in baseline standard deviations, the ",
+                 "e-detector mixes ", "over. A zero shift contributes a ",
+                 "likelihood ratio of exactly 1 ", "at every observation, so ",
+                 "the statistic grows on nothing.", class = "bad_argument")
     }
     if (any(deltas == 0)) {
-      warning("`deltas` contains 0, which contributes a likelihood ratio of ",
-              "exactly 1 at every observation and only dilutes the mixture. ",
-              "Dropping it.", call. = FALSE)
+      cpt_warn("`deltas` contains 0, which contributes a likelihood ratio of ",
+               "exactly 1 at every observation and only dilutes the mixture. ",
+               "Dropping it.", class = "dropped_input")
       deltas <- deltas[deltas != 0]
     }
     # `...` reaches the engine in the cpm and ocd branches and has nowhere
@@ -211,15 +279,15 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
     # ggcptplot_internal() warns about.
     extra <- names(list(...))
     if (length(list(...)) > 0) {
-      warning("`method = \"edetector\"` is native to this package and takes ",
-              "no engine arguments, so ",
-              if (length(extra) && all(nzchar(extra))) {
-                paste0("`", paste(extra, collapse = "`, `"), "` ")
-              } else {
-                paste0(length(list(...)), " unnamed argument(s) ")
-              },
-              "would be ignored. It is tuned by `alpha` and `deltas`.",
-              call. = FALSE)
+      cpt_warn("`method = \"edetector\"` is native to this package and takes ",
+               "no engine arguments, so ",
+               if (length(extra) && all(nzchar(extra))) {
+                 paste0("`", paste(extra, collapse = "`, `"), "` ")
+               } else {
+                 paste0(length(list(...)), " unnamed argument(s) ")
+               },
+               "would be ignored. It is tuned by `alpha` and `deltas`.",
+               class = "argument_ignored")
     }
   }
   if (identical(method, "ocd")) {
@@ -255,21 +323,21 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
   state <- switch(method,
     edetector = {
       if (is.null(baseline) || NROW(baseline) < 5) {
-        stop("`edetector` estimates the in-control mean and scale from ",
-             "`baseline`, so it needs at least 5 pre-change observations.",
-             call. = FALSE)
+        cpt_abort("`edetector` estimates the in-control mean and scale from ",
+                  "`baseline`, so it needs at least 5 pre-change observations.",
+                  class = "short_series")
       }
       b <- as.numeric(baseline)
       # Check finiteness first: sd() of a vector holding an NA is itself NA,
       # so the variability test below would blame a flat baseline for what is
       # really a missing value.
       if (anyNA(b) || any(!is.finite(b))) {
-        stop_nonfinite(b, "baseline")
+        stop_nonfinite(b, "baseline", stream_na_hint(b))
       }
       sd0 <- stats::sd(b)
       if (!is.finite(sd0) || sd0 <= 0) {
-        stop("`baseline` has zero variability, so the e-detector's scale is ",
-             "undefined.", call. = FALSE)
+        cpt_abort("`baseline` has zero variability, so the e-detector's scale ",
+                   "is ", "undefined.", class = "input_error")
       }
       deltas <- sort(unique(c(-abs(deltas), abs(deltas)))) * sd0
       list(mu0 = mean(b), sd0 = sd0, deltas = deltas,
@@ -287,21 +355,48 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
       # returns NULL). See cpm_check_type() for what each one looks like.
       validate_scalar(arl0, "arl0")
       cpm_type <- cpm_check_type(cpm_type, list(...))
+      engine_dots <- cpm_engine_dots(cpm_type, list(...))
       cpm_out <- utils::capture.output(
-        m <- cpm::makeChangePointModel(cpmType = cpm_type, ARL0 = arl0, ...)
+        m <- do.call(cpm::makeChangePointModel,
+                     c(list(cpmType = cpm_type, ARL0 = arl0), engine_dots))
       )
-      cpm_check_printed_error(cpm_out, arl0, list(...))
+      cpm_check_printed_error(cpm_out, arl0, engine_dots)
       if (length(cpm_out)) cat(cpm_out, sep = "\n")
+      # A change cpm detects INSIDE the baseline left the model tripped:
+      # changeDetected() was already TRUE when the loop ended, so the first
+      # monitored observation inherited the alarm. Measured before this
+      # was fixed: an alarm at stream index 1 in 2 of 6 clean iid runs and
+      # 6 of 6 AR(1) runs, and never without a baseline. The model is now
+      # restarted after each baseline detection, as cpt_update() does after
+      # an alarm, and the caller is told the baseline was not in control.
+      n_tripped <- 0L
       if (!is.null(baseline)) {
-        for (v in as.numeric(baseline)) m <- cpm::processObservation(m, v)
+        for (v in as.numeric(baseline)) {
+          m <- cpm::processObservation(m, v)
+          if (isTRUE(cpm::changeDetected(m))) {
+            n_tripped <- n_tripped + 1L
+            m <- cpm::cpmReset(m)
+          }
+        }
+      }
+      if (n_tripped > 0L) {
+        cpt_warn("cpm detected ", n_tripped, " change(s) inside `baseline`, ",
+                 "so the baseline is not in control. The monitor was ",
+                 "restarted after each, and only the stretch after the last ",
+                 "one informs it; check the baseline, or build the monitor ",
+                 "without one.", class = "assumption",
+                 data = list(n_changes = n_tripped))
       }
       list(model = m, cpm_type = cpm_type, arl0 = arl0)
     },
+    cusum = ,
+    ewma = chart_state(method, baseline, arl0 = arl0, k = k,
+                       lambda = lambda, limit = limit),
     ocd = {
       need_pkg("ocd")
       if (is.null(baseline)) {
-        stop("`ocd` needs `baseline` to estimate the pre-change mean and ",
-             "standard deviation.", call. = FALSE)
+        cpt_abort("`ocd` needs `baseline` to estimate the pre-change mean and ",
+                  "standard deviation.", class = "bad_argument")
       }
       B <- if (is.matrix(baseline) || is.data.frame(baseline)) {
         as_mv_matrix(baseline, arg = "baseline")
@@ -310,10 +405,10 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
       }
       p <- ncol(B)
       if (p < 2) {
-        stop("Method `ocd` is high-dimensional and needs at least two ",
-             "coordinates, but `baseline` has ", p,
-             ". Use method = \"edetector\" or \"cpm\" for one series.",
-             call. = FALSE)
+        cpt_abort("Method `ocd` is high-dimensional and needs at least two ",
+                  "coordinates, but `baseline` has ", p, ". Use method = ",
+                   "\"edetector\" or \"cpm\" for one series.",
+                  class = "wrong_dimension")
       }
       det <- ocd::ChangepointDetector(dim = p, method = "ocd",
                                       thresh = thresh, beta = 1,
@@ -330,6 +425,8 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
     }
   )
 
+  if (!is.null(baseline)) check_baseline_dependence(baseline, method)
+
   structure(
     list(method = method, state = state, reset = reset,
          relearn = as.integer(relearn),
@@ -338,11 +435,48 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
          relearn_left = 0L,
          relearn_buffer = NULL,
          data = numeric(0),
+         trace = tibble::tibble(time = integer(), statistic = numeric(),
+                                lower = numeric()),
          alarms = tibble::tibble(time = integer(), statistic = numeric(),
                                  threshold = numeric()),
          alpha = alpha),
     class = "ggcpt_monitor"
   )
+}
+
+# Internal: the state of a CUSUM or EWMA chart, standardised by the
+# baseline and calibrated to arl0 unless a limit is given.
+#' @noRd
+chart_state <- function(method, baseline, arl0, k, lambda, limit) {
+  if (is.null(baseline) || NROW(baseline) < 5) {
+    cpt_abort("`", method, "` standardises the stream by the in-control ",
+              "mean and standard deviation of `baseline`, so it needs at ",
+              "least 5 pre-change observations.", class = "short_series")
+  }
+  b <- as.numeric(baseline)
+  if (anyNA(b) || any(!is.finite(b))) {
+    stop_nonfinite(b, "baseline", stream_na_hint(b))
+  }
+  sd0 <- stats::sd(b)
+  if (!is.finite(sd0) || sd0 <= 0) {
+    cpt_abort("`baseline` has zero variability, so the chart's scale is ",
+              "undefined.", class = "input_error")
+  }
+  check_chart_arl0(arl0)
+  if (!is.null(limit)) validate_scalar(limit, "limit", min = 0,
+                                       min_open = TRUE)
+  if (method == "cusum") {
+    validate_scalar(k, "k", min = 0)
+    h <- limit %||% cusum_h_for(arl0, k)
+    return(list(mu0 = mean(b), sd0 = sd0, k = k, h = h, sp = 0, sn = 0,
+                threshold = h, arl0 = arl0,
+                calibrated = is.null(limit)))
+  }
+  validate_scalar(lambda, "lambda", min = 0, max = 1, min_open = TRUE)
+  L <- limit %||% ewma_L_for(arl0, lambda)
+  list(mu0 = mean(b), sd0 = sd0, lambda = lambda, L = L, z = 0,
+       threshold = L * sqrt(lambda / (2 - lambda)), arl0 = arl0,
+       calibrated = is.null(limit))
 }
 
 #' Feed observations to a monitor
@@ -369,8 +503,8 @@ cpt_monitor <- function(method = c("edetector", "cpm", "ocd"),
 #' alarms(mon)
 cpt_update <- function(monitor, new_obs) {
   if (!inherits(monitor, "ggcpt_monitor")) {
-    stop("`monitor` must be a ggcpt_monitor from cpt_monitor().",
-         call. = FALSE)
+    cpt_abort("`monitor` must be a ggcpt_monitor from cpt_monitor().",
+              class = "bad_argument")
   }
   X <- if (is.matrix(new_obs) || is.data.frame(new_obs)) {
     as_mv_matrix(new_obs, arg = "new_obs")
@@ -381,7 +515,7 @@ cpt_update <- function(monitor, new_obs) {
   }
   if (nrow(X) == 0) return(monitor)
   if (anyNA(X) || any(!is.finite(X))) {
-    stop_nonfinite(X, "new_obs")
+    stop_nonfinite(X, "new_obs", stream_na_hint(X))
   }
   # A monitor is stateful and dimensioned by its baseline. Feeding it a
   # different width is a mistake, not a coercion: `ocd` would consume the
@@ -389,10 +523,9 @@ cpt_update <- function(monitor, new_obs) {
   # column 1 and ignore the rest.
   expected <- monitor_width(monitor)
   if (!is.na(expected) && ncol(X) != expected) {
-    stop("This monitor was built on ", expected, " coordinate(s) but ",
-         "`new_obs` has ", ncol(X),
-         ". A monitor cannot change width once it is running.",
-         call. = FALSE)
+    cpt_abort("This monitor was built on ", expected, " coordinate(s) but ",
+              "`new_obs` has ", ncol(X), ". A monitor cannot change width ",
+               "once it is running.", class = "wrong_dimension")
   }
 
   st <- monitor$state
@@ -402,6 +535,8 @@ cpt_update <- function(monitor, new_obs) {
   # `monitor$data <- c(monitor$data, xt[1])` inside the loop made replaying
   # 10,000 observations do on the order of 50 million element copies.
   seen <- numeric(nrow(X))
+  trace_stat <- rep(NA_real_, nrow(X))
+  trace_low <- rep(NA_real_, nrow(X))
 
   for (i in seq_len(nrow(X))) {
     monitor$t <- monitor$t + 1L
@@ -455,6 +590,27 @@ cpt_update <- function(monitor, new_obs) {
       thr <- st$threshold
       hit <- is.finite(stat) && stat >= thr
       if (hit && monitor$reset) st$R <- rep(0, length(st$deltas))
+    } else if (monitor$method == "cusum") {
+      z <- (xt[1] - st$mu0) / st$sd0
+      st$sp <- max(0, st$sp + z - st$k)
+      st$sn <- max(0, st$sn - z - st$k)
+      trace_low[i] <- -st$sn
+      stat <- max(st$sp, st$sn)
+      thr <- st$h
+      hit <- stat >= thr
+      trace_stat[i] <- st$sp
+      if (hit && monitor$reset) {
+        st$sp <- 0
+        st$sn <- 0
+      }
+    } else if (monitor$method == "ewma") {
+      z <- (xt[1] - st$mu0) / st$sd0
+      st$z <- st$lambda * z + (1 - st$lambda) * st$z
+      stat <- st$z
+      thr <- st$threshold
+      hit <- abs(stat) >= thr
+      trace_stat[i] <- st$z
+      if (hit && monitor$reset) st$z <- 0
     } else if (monitor$method == "cpm") {
       st$model <- cpm::processObservation(st$model, xt[1])
       stat <- suppressWarnings(as.numeric(
@@ -485,6 +641,7 @@ cpt_update <- function(monitor, new_obs) {
       }
     }
 
+    if (!monitor$method %in% c("cusum", "ewma")) trace_stat[i] <- stat
     if (isTRUE(hit)) {
       new_alarms[[length(new_alarms) + 1L]] <-
         tibble::tibble(time = monitor$t, statistic = stat, threshold = thr)
@@ -497,6 +654,11 @@ cpt_update <- function(monitor, new_obs) {
 
   monitor$state <- st
   monitor$data <- c(monitor$data, seen)
+  # The statistic at every observation (NA while re-learning), so a chart
+  # can be drawn; a monitor built before 0.7.0 has no trace to extend.
+  steps <- tibble::tibble(time = monitor$t - rev(seq_len(nrow(X))) + 1L,
+                          statistic = trace_stat, lower = trace_low)
+  monitor$trace <- rbind(monitor$trace %||% steps[0, ], steps)
   if (length(new_alarms) > 0) {
     monitor$alarms <- rbind(monitor$alarms, do.call(rbind, new_alarms))
   }
@@ -512,6 +674,8 @@ monitor_width <- function(monitor) {
     ocd = monitor$state$p,
     edetector = 1L,
     cpm = 1L,
+    cusum = 1L,
+    ewma = 1L,
     NA_integer_
   )
 }
@@ -531,6 +695,17 @@ monitor_relearn <- function(method, st, buffer) {
     }
     st$mu0 <- mean(v)
     st$R <- rep(0, length(st$deltas))
+  } else if (method %in% c("cusum", "ewma")) {
+    v <- as.numeric(buffer[, 1])
+    sd0 <- stats::sd(v)
+    if (is.finite(sd0) && sd0 > 0) st$sd0 <- sd0
+    st$mu0 <- mean(v)
+    if (method == "cusum") {
+      st$sp <- 0
+      st$sn <- 0
+    } else {
+      st$z <- 0
+    }
   } else if (method == "ocd") {
     st$mean <- colMeans(buffer)
     sdv <- apply(buffer, 2, stats::sd)
@@ -578,8 +753,23 @@ tidy.ggcpt_monitor <- function(x, ...) {
 #' @export
 print.ggcpt_monitor <- function(x, ...) {
   cat("ggcpt_monitor (", x$method,
-      if (identical(x$method, "edetector")) ", native implementation" else "",
+      if (x$method %in% c("edetector", "cusum", "ewma")) {
+        ", native implementation"
+      } else "",
       ")\n", sep = "")
+  st <- x$state
+  if (identical(x$method, "cusum")) {
+    cat("  Chart: k = ", format(st$k), ", h = ", format(signif(st$h, 4)),
+        if (isTRUE(st$calibrated)) paste0(" (in-control ARL ",
+                                          format(st$arl0), ")"),
+        "\n", sep = "")
+  } else if (identical(x$method, "ewma")) {
+    cat("  Chart: lambda = ", format(st$lambda), ", L = ",
+        format(signif(st$L, 4)),
+        if (isTRUE(st$calibrated)) paste0(" (in-control ARL ",
+                                          format(st$arl0), ")"),
+        "\n", sep = "")
+  }
   cat("  Baseline observations: ", x$n_baseline, "\n", sep = "")
   cat("  Monitored observations: ", x$t, "\n", sep = "")
   cat("  Alarms: ", nrow(x$alarms), "\n", sep = "")
@@ -597,20 +787,26 @@ print.ggcpt_monitor <- function(x, ...) {
 #' @rdname cpt_monitor
 #' @param object A \code{ggcpt_monitor} object (for \code{autoplot()}).
 #' @param plot_type \code{"timeline"} (the monitored series with the alarms
-#'   marked), \code{"statistic"} (the detection statistic at each alarm,
-#'   against its threshold: a monitor records its statistic only when an
-#'   alarm fires) or \code{"runlength"} (the gaps between alarms, which
-#'   estimate the run length). For a multivariate monitor the timeline draws
+#'   marked), \code{"control_chart"} (the detection statistic at every
+#'   observation against its limits, with the alarms flagged: for a CUSUM
+#'   the upper and lower sums against \eqn{\pm h}, for an EWMA the
+#'   smoothed statistic between its limits), \code{"statistic"} (the
+#'   statistic at each alarm only, against its threshold) or
+#'   \code{"runlength"} (the gaps between alarms, which estimate the run
+#'   length). For a multivariate monitor the timeline draws
 #'   the first coordinate: the alarms are shared, so the rules are right
 #'   whichever coordinate is shown, but the line is one of several.
 #' @export
 autoplot.ggcpt_monitor <- function(object,
                                    plot_type = c("timeline", "statistic",
-                                                 "runlength"),
+                                                 "runlength",
+                                                 "control_chart"),
                                    ...) {
-  plot_type <- match.arg(plot_type)
+  plot_type <- cpt_match_arg(plot_type)
   al <- object$alarms
   d <- tibble::tibble(time = seq_along(object$data), value = object$data)
+
+  if (plot_type == "control_chart") return(control_chart(object))
 
   if (plot_type == "timeline") {
     p <- ggplot2::ggplot(d, ggplot2::aes(time, value)) +
@@ -632,10 +828,10 @@ autoplot.ggcpt_monitor <- function(object,
       # cpt_replay() used to be offered here as the way to a "full
       # statistic trace". It returns the same object, which records the
       # statistic at alarms only, so the advice led nowhere.
-      stop("No alarm has fired, so there is no statistic to draw: a ",
-           "monitor records its statistic only when an alarm fires. ",
-           "`plot_type = \"timeline\"` shows the monitored series.",
-           call. = FALSE)
+      cpt_abort("No alarm has fired, so there is no statistic to draw: a ",
+                "monitor records its statistic only when an alarm fires. ",
+                "`plot_type = \"timeline\"` shows the monitored series.",
+                class = "capability_absent")
     }
     return(
       ggplot2::ggplot(al, ggplot2::aes(time, statistic)) +
@@ -650,8 +846,8 @@ autoplot.ggcpt_monitor <- function(object,
 
   # runlength
   if (nrow(al) < 2) {
-    stop("At least two alarms are needed to show run lengths; this monitor ",
-         "has ", nrow(al), ".", call. = FALSE)
+    cpt_abort("At least two alarms are needed to show run lengths; this ",
+               "monitor ", "has ", nrow(al), ".", class = "capability_absent")
   }
   rl <- tibble::tibble(run_length = diff(c(0L, al$time)))
   ggplot2::ggplot(rl, ggplot2::aes(run_length)) +
@@ -690,9 +886,10 @@ autoplot.ggcpt_monitor <- function(object,
 #' set.seed(2026)
 #' mon <- cpt_replay(c(rnorm(200), rnorm(200, 3)), method = "edetector")
 #' alarms(mon)
-cpt_replay <- function(x, method = c("edetector", "cpm", "ocd"),
+cpt_replay <- function(x, method = c("edetector", "cpm", "ocd", "cusum",
+                                  "ewma"),
                        baseline = NULL, ...) {
-  method <- match.arg(method)
+  method <- cpt_match_arg(method)
   # coerce_series_values()/as_mv_matrix(), not a bare as.numeric(): a factor
   # coerces to its LEVEL CODES, which for labels like "10", "2", "30" is the
   # alphabetical order 3, 1, 2 rather than the numbers -- so a replay ran on
@@ -704,8 +901,8 @@ cpt_replay <- function(x, method = c("edetector", "cpm", "ocd"),
   }
   n <- nrow(X)
   if (n < 10) {
-    stop("A replay needs at least 10 observations; got ", n, ".",
-         call. = FALSE)
+    cpt_abort("A replay needs at least 10 observations; got ", n, ".",
+              class = "short_series")
   }
   # Without this, a non-finite value was caught downstream by whichever of
   # cpt_monitor() or cpt_update() happened to receive the slice containing
@@ -714,7 +911,7 @@ cpt_replay <- function(x, method = c("edetector", "cpm", "ocd"),
   # caller never passed, and counted "1 of 45 values" against the baseline
   # slice rather than the series. Checked here, the message describes `x`.
   if (anyNA(X) || any(!is.finite(X))) {
-    stop_nonfinite(X)
+    stop_nonfinite(X, hint = stream_na_hint(X))
   }
   if (is.null(baseline)) baseline <- min(100L, floor(n / 4))
   # `baseline` is documented two ways -- a count of leading observations, or
@@ -733,12 +930,12 @@ cpt_replay <- function(x, method = c("edetector", "cpm", "ocd"),
     # pre-change observations" and never mentioned the 500.
     if (is.na(baseline) || baseline %% 1 != 0 || baseline < 1 ||
         baseline >= n) {
-      stop("`baseline` as a single number is the count of leading ",
-           "observations to train on, so it must be a whole number in ",
-           "1..", n - 1L, "; the series has ", n, " observations and ",
-           "`baseline` is ", format(baseline), ". Pass an explicit ",
-           "baseline series if you meant a value rather than a count.",
-           call. = FALSE)
+      cpt_abort("`baseline` as a single number is the count of leading ",
+                "observations to train on, so it must be a whole number in ",
+                "1..", n - 1L, "; the series has ", n, " observations and ",
+                "`baseline` is ", format(baseline), ". Pass an explicit ",
+                "baseline series if you meant a value rather than a count.",
+                class = "bad_argument")
     }
     n_base <- as.integer(baseline)
     base_data <- X[seq_len(n_base), , drop = FALSE]
@@ -803,14 +1000,14 @@ cpt_delay <- function(object, truth, max_delay = Inf) {
   # compared as text.
   if (!is.numeric(max_delay) || length(max_delay) != 1L || is.na(max_delay) ||
       max_delay < 0) {
-    stop("`max_delay` must be a single non-negative number (`Inf` for no ",
-         "limit); got ", paste(format(max_delay), collapse = ", "), ".",
-         call. = FALSE)
+    cpt_abort("`max_delay` must be a single non-negative number (`Inf` for no ",
+              "limit); got ", paste(format(max_delay), collapse = ", "), ".",
+              class = "bad_argument")
   }
   if (missing(truth)) {
-    stop("`truth` is required: detection delay is measured from the true ",
-         "changepoint(s), so there is nothing to measure without them. Pass ",
-         "the location(s) as an integer vector.", call. = FALSE)
+    cpt_abort("`truth` is required: detection delay is measured from the true ",
+              "changepoint(s), so there is nothing to measure without them. Pass ",
+              "the location(s) as an integer vector.", class = "bad_argument")
   }
   al <- if (inherits(object, "ggcpt_monitor")) {
     a <- object$alarms
@@ -820,13 +1017,13 @@ cpt_delay <- function(object, truth, max_delay = Inf) {
   } else if (is.data.frame(object) && "time" %in% names(object)) {
     tibble::as_tibble(object)
   } else {
-    stop("`object` must be a ggcpt_monitor or a tibble with a `time` column.",
-         call. = FALSE)
+    cpt_abort("`object` must be a ggcpt_monitor or a tibble with a `time` ",
+               "column.", class = "bad_argument")
   }
   truth <- as_cp_locations(truth, "truth", sort = TRUE)
   if (length(truth) == 0 || anyNA(truth) || any(truth < 1)) {
-    stop("`truth` must be one or more positive changepoint locations.",
-         call. = FALSE)
+    cpt_abort("`truth` must be one or more positive changepoint locations.",
+              class = "bad_argument")
   }
   n_obs <- if (inherits(object, "ggcpt_monitor")) {
     object$t + (object$offset %||% 0L)
@@ -837,9 +1034,9 @@ cpt_delay <- function(object, truth, max_delay = Inf) {
   # A truth past the end of the stream can never be detected, so scoring it
   # would report a miss that says more about the argument than the detector.
   if (inherits(object, "ggcpt_monitor") && any(truth > n_obs)) {
-    stop("`truth` runs past the end of the stream: ",
-         paste(utils::head(truth[truth > n_obs], 5), collapse = ", "),
-         " vs ", n_obs, " observations seen.", call. = FALSE)
+    cpt_abort("`truth` runs past the end of the stream: ",
+              paste(utils::head(truth[truth > n_obs], 5), collapse = ", "),
+              " vs ", n_obs, " observations seen.", class = "bad_argument")
   }
 
   used <- rep(FALSE, nrow(al))
@@ -928,8 +1125,8 @@ print.ggcpt_delay <- function(x, ...) {
 autoplot.ggcpt_delay <- function(object, ...) {
   d <- object$per_change
   if (all(!d$detected)) {
-    stop("No change was detected, so there are no delays to draw.",
-         call. = FALSE)
+    cpt_abort("No change was detected, so there are no delays to draw.",
+              class = "capability_absent")
   }
   ggplot2::ggplot(d, ggplot2::aes(factor(truth), delay)) +
     ggplot2::geom_col(ggplot2::aes(fill = detected), width = 0.6,
@@ -946,4 +1143,98 @@ autoplot.ggcpt_delay <- function(object, ...) {
                                     } else {
                                       format(object$arl, digits = 4)
                                     }))
+}
+
+# Internal: the one moment the streaming API can test its independence
+# assumption before a wrong answer exists. A monitor is handed an in-control
+# baseline before any decision; measured (§206), under AR(1) noise with
+# rho = 0.7 the e-detector raised 3.9 times and cpm 10 times their declared
+# false-alarm rates. Warned once, at construction, rather than after the
+# pager has been muted.
+#' @noRd
+check_baseline_dependence <- function(baseline, method) {
+  B <- if (is.matrix(baseline) || is.data.frame(baseline)) {
+    as.matrix(baseline)
+  } else {
+    matrix(as.numeric(baseline), ncol = 1)
+  }
+  if (nrow(B) < 20L) return(invisible(NULL))
+  deps <- lapply(seq_len(ncol(B)), function(j) {
+    residual_dependence(B[, j], integer(0))
+  })
+  p <- vapply(deps, function(d) if (is.null(d)) NA_real_ else d$p_value,
+              numeric(1))
+  acf1 <- vapply(deps, function(d) if (is.null(d)) NA_real_ else d$acf1,
+                 numeric(1))
+  worst <- which.min(p)
+  if (!length(worst) || is.na(p[worst]) || p[worst] >= 0.05) {
+    return(invisible(NULL))
+  }
+  cpt_warn("`baseline` is autocorrelated (Ljung-Box p = ",
+           format(signif(p[worst], 2)), ", lag-1 autocorrelation ",
+           format(round(acf1[worst], 2)),
+           if (ncol(B) > 1L) paste0(", coordinate ", worst) else "",
+           "). The `", method, "` monitor's false-alarm rate assumes ",
+           "independent observations; measured under AR(1) noise with ",
+           "rho = 0.7, the monitors raised four to ten times their declared ",
+           "rate. Expect alarms sooner than `arl0` or `alpha` says, or model ",
+           "the dependence before monitoring (for example, monitor the ",
+           "residuals of an AR fit).", class = "dependence",
+           data = list(p_value = p[worst], acf1 = acf1[worst]))
+  invisible(NULL)
+}
+
+# Internal: the control chart of a monitor: its statistic at every
+# observation against its limits, alarms flagged.
+#' @noRd
+control_chart <- function(object) {
+  tr <- object$trace
+  if (is.null(tr) || !nrow(tr)) {
+    cpt_abort("This monitor has consumed no observations yet (or was built ",
+              "before 0.7.0, which recorded no trace), so there is no chart ",
+              "to draw. Feed it with cpt_update().",
+              class = "capability_absent")
+  }
+  st <- object$state
+  al <- object$alarms
+  lim <- switch(object$method,
+    cusum = c(-st$h, st$h),
+    ewma = c(-st$threshold, st$threshold),
+    edetector = c(NA_real_, st$threshold),
+    ocd = c(NA_real_, 1),
+    c(NA_real_, NA_real_)
+  )
+  ylab <- switch(object$method,
+    cusum = "CUSUM (upper, lower)",
+    ewma = "EWMA (standardised)",
+    edetector = "E-detector",
+    "Statistic"
+  )
+  p <- ggplot2::ggplot(tr, ggplot2::aes(x = time, y = statistic)) +
+    ggplot2::geom_line(colour = "#0072B2", na.rm = TRUE)
+  if (any(!is.na(tr$lower))) {
+    p <- p + ggplot2::geom_line(ggplot2::aes(y = lower), colour = "#0072B2",
+                                na.rm = TRUE)
+  }
+  lims <- lim[!is.na(lim)]
+  if (length(lims)) {
+    p <- p + ggplot2::geom_hline(yintercept = lims, linetype = "dashed",
+                                 colour = "#D55E00")
+  }
+  if (nrow(al)) {
+    hit <- tr[tr$time %in% al$time, , drop = FALSE]
+    yv <- if (object$method == "cusum") {
+      ifelse(abs(hit$lower) > hit$statistic, hit$lower, hit$statistic)
+    } else hit$statistic
+    p <- p + ggplot2::geom_point(data = tibble::tibble(time = hit$time,
+                                                       statistic = yv),
+                                 colour = "#D55E00", size = 2.2,
+                                 na.rm = TRUE)
+  }
+  p + ggplot2::labs(x = "Observation", y = ylab,
+                    title = paste0("Control chart (", object$method, ")"),
+                    subtitle = paste0(nrow(al), " alarm(s) in ", object$t,
+                                      " observations; dashed: control ",
+                                      "limits")) +
+    theme_ggcpt()
 }

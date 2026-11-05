@@ -60,11 +60,11 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
     if (length(fitted) == n) {
       data_tbl$fitted <- as.numeric(fitted)
     } else {
-      warning("`", method, "` returned a fitted signal of length ",
-              length(fitted), " for a series of length ", n,
-              ", so it is dropped: `autoplot(show_fit = TRUE)` and ",
-              "`augment()` will report no fitted signal for this result.",
-              call. = FALSE)
+      cpt_warn("`", method, "` returned a fitted signal of length ",
+               length(fitted), " for a series of length ", n,
+               ", so it is dropped: `autoplot(show_fit = TRUE)` and ",
+               "`augment()` will report no fitted signal for this result.",
+               class = "dropped_input")
     }
   }
 
@@ -73,11 +73,12 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
     res$change_in <- change_in
     res$penalty <- penalty
     res$fit <- fit
-    res$call <- call
+    res$call <- record_call(call)
     res$data <- data_tbl
     res$data_wide <- data_wide
     res$regions <- normalise_regions(regions, n)
     res$diagnostics <- diagnostics
+    res$versions <- version_stamp(method)
     return(res)
   }
 
@@ -89,12 +90,13 @@ ggcpt_build <- function(data_vec, cp_indices, method, change_in, penalty,
     change_in = change_in,
     penalty = penalty,
     fit = fit,
-    call = call,
+    call = record_call(call),
     cp_convention = "left"
   )
   res$data_wide <- data_wide
   res$regions <- normalise_regions(regions, n)
   res$diagnostics <- diagnostics
+  res$versions <- version_stamp(method)
   warn_if_degenerate(res, method)
   res
 }
@@ -136,9 +138,11 @@ rethrow_short_series <- function(e, method, n, hint = NULL) {
   # sentence -- otherwise the hint runs straight on from the engine's last
   # word ("... less than two periods `bfast` needs at least ...").
   msg <- sub("[.;:, ]+$", "", msg)
-  stop("Method `", method, "` could not segment a series of ", n,
-       " observation(s). The engine reported: \"", msg, "\".",
-       if (!is.null(hint)) paste0(" ", hint) else "", call. = FALSE)
+  cpt_abort("Method `", method, "` could not segment a series of ", n,
+            " observation(s). The engine reported: \"", msg, "\".",
+            if (!is.null(hint)) paste0(" ", hint) else "",
+            class = "short_series",
+            data = list(method = method, n = n), parent = e)
 }
 
 #' @noRd
@@ -169,16 +173,16 @@ warn_if_degenerate <- function(res, method) {
   pen <- res$penalty$value
   zero_penalty <- is.numeric(pen) && length(pen) == 1L &&
     is.finite(pen) && pen == 0
-  warning("`", method, "` put a changepoint after every observation: ", k,
-          " changepoint(s) on ", n, " observation(s), so every segment is ",
-          "one point long. ",
-          if (zero_penalty) {
-            paste0("With a penalty of 0 that is the unpenalised optimum, ",
-                   "not a segmentation; give `penalty` a positive value.")
-          } else {
-            paste0("That is a failure to segment rather than a ",
-                   "segmentation: the series is too short for this engine.")
-          }, call. = FALSE)
+  cpt_warn("`", method, "` put a changepoint after every observation: ", k,
+           " changepoint(s) on ", n, " observation(s), so every segment is ",
+           "one point long. ",
+           if (zero_penalty) {
+             paste0("With a penalty of 0 that is the unpenalised optimum, ",
+                    "not a segmentation; give `penalty` a positive value.")
+           } else {
+             paste0("That is a failure to segment rather than a ",
+                    "segmentation: the series is too short for this engine.")
+           }, class = "degenerate")
   invisible(res)
 }
 
@@ -191,8 +195,8 @@ normalise_regions <- function(regions, n) {
   if (is.null(regions)) return(NULL)
   if (is.matrix(regions)) {
     if (ncol(regions) < 2L) {
-      stop("`regions` must have at least two columns (start, end).",
-           call. = FALSE)
+      cpt_abort("`regions` must have at least two columns (start, end).",
+                class = "bad_argument")
     }
     cn <- colnames(regions)
     regions <- tibble::as_tibble(as.data.frame(regions),
@@ -202,7 +206,8 @@ normalise_regions <- function(regions, n) {
   regions <- tibble::as_tibble(regions)
   if (!all(c("start", "end") %in% names(regions))) {
     if (ncol(regions) < 2L) {
-      stop("`regions` must have `start` and `end` columns.", call. = FALSE)
+      cpt_abort("`regions` must have `start` and `end` columns.",
+                class = "bad_argument")
     }
     names(regions)[1:2] <- c("start", "end")
   }
@@ -324,24 +329,59 @@ need_pkg <- function(pkg) {
   # Suppressed here and only here, because this function's job is to make
   # the engine available; the fit runs afterwards, outside this call, so
   # nothing an engine says about the data can be hidden by it.
-  if (!suppressMessages(suppressWarnings(
+  if (suppressMessages(suppressWarnings(
         requireNamespace(pkg, quietly = TRUE)))) {
-    stop("Package '", pkg, "' is required. ",
-         "Install it with ", install_hint(pkg), ".",
-         call. = FALSE)
+    return(invisible(TRUE))
   }
-  invisible(TRUE)
+  # An engine that is installed and will not load needs different advice
+  # from one that is missing. On 2026-10-12 crops 1.0.5 stopped exporting
+  # the S4 plot() and summary() methods that cpop 1.0.9 re-exports, so every
+  # installed cpop failed in loadNamespace(), and this error told its users
+  # to install the package they already had. The load error names the
+  # package that broke.
+  why <- if (engine_installed(pkg)) engine_load_error(pkg)
+  if (!is.null(why)) {
+    cpt_abort("Package '", pkg, "' is installed but does not load: ", why,
+              if (!grepl("[.!?]$", why)) ".",
+              " The failure is in '", pkg, "' or a package it depends on.",
+              class = "engine_missing",
+              data = list(package = pkg, install = install_hint(pkg),
+                          load_error = why))
+  }
+  cpt_abort("Package '", pkg, "' is required. ", "Install it with ",
+            install_hint(pkg), ".", class = "engine_missing",
+            data = list(package = pkg, install = install_hint(pkg)))
+}
+
+# Internal: why an installed package will not load, as loadNamespace() puts
+# it (requireNamespace() only answers FALSE), or NULL if it loads.
+#' @noRd
+engine_load_error <- function(pkg) {
+  tryCatch({
+    suppressMessages(suppressWarnings(loadNamespace(pkg)))
+    NULL
+  }, error = function(e) gsub("\\s+", " ", trimws(conditionMessage(e))))
 }
 
 # Internal: suggested engines that CRAN no longer serves, and the repository
-# that does. `fpop` was archived from CRAN on 2026-09-14 at its maintainer's
-# request and is still built on R-Forge, where it is developed. DESCRIPTION
-# declares the same repositories in `Additional_repositories`, which is what
-# CRAN policy asks of a suggested package outside the mainstream
-# repositories; a test keeps the two in agreement.
+# that does. DESCRIPTION declares the same repositories in
+# `Additional_repositories`, which is what CRAN policy asks of a suggested
+# package outside the mainstream repositories; a test keeps the two in
+# agreement, and the weekly all-engines workflow fails when a declared
+# dependency leaves CRAN without an entry here.
+#
+# - `fpop`, archived on 2026-09-14 at its maintainer's request, is still
+#   built on R-Forge, where it is developed.
+# - `ocp`, archived on 2026-10-12 over two documentation notes, has no
+#   other home: its GitHub repository has not changed since 2021, and
+#   r-universe drops an archived package after 60 days. The package website
+#   serves the last CRAN release of every dependency CRAN has archived, as
+#   a CRAN-like repository (`.github/off-cran.R` builds it on each pkgdown
+#   deploy), and that is where it comes from.
 #' @noRd
 engine_repos <- function() {
-  c(fpop = "https://R-Forge.R-project.org")
+  c(fpop = "https://R-Forge.R-project.org",
+    ocp = "https://pursuitofdatascience.github.io/ggchangepoint/repo")
 }
 
 # Internal: the install.packages() call that fetches `pkg`, as text for an
@@ -372,20 +412,22 @@ as_uni_vector <- function(x, method) {
       reg <- full_registry()
       mv <- isTRUE(reg$multivariate[match(method, reg$method)])
       if (mv) {
-        stop("`x` has ", ncol(X), " columns, but this function works on a ",
-             "single series, even with `method = \"", method, "\"`, which ",
-             "is multivariate. Pass one column, or run the multivariate ",
-             "fit with cpt_detect() directly.", call. = FALSE)
+        cpt_abort("`x` has ", ncol(X), " columns, but this function works on ",
+                   "a ", "single series, even with `method = \"", method,
+                  "\"`, which ", "is multivariate. Pass one column, or run ",
+                   "the multivariate ", "fit with cpt_detect() directly.",
+                  class = "wrong_dimension")
       }
-      stop("Method `", method, "` is univariate, but `x` has ", ncol(X),
-           " columns. See cpt_methods() for multivariate methods.",
-           call. = FALSE)
+      cpt_abort("Method `", method, "` is univariate, but `x` has ", ncol(X),
+                " columns. See cpt_methods() for multivariate methods.",
+                class = "wrong_dimension")
     }
     # A zero-column frame reaches `X[, 1]` and stops with base R's
     # "subscript out of bounds", which names neither the argument nor this
     # package.
     if (ncol(X) == 0L) {
-      stop("`x` is empty: it has no columns to detect on.", call. = FALSE)
+      cpt_abort("`x` is empty: it has no columns to detect on.",
+                class = "wrong_dimension")
     }
     return(as.numeric(X[, 1]))
   }
@@ -420,12 +462,11 @@ drop_constant_cols <- function(X, method) {
   flat <- constant_cols(X)
   if (!any(flat)) return(X)
   if (all(flat)) return(NULL)
-  warning("Dropping constant coordinate(s) ",
-          paste(colnames(X)[flat], collapse = ", "),
-          " before running `", method,
-          "`: a flat coordinate carries no changepoint information and ",
-          "makes the engine's standardised statistics undefined.",
-          call. = FALSE)
+  cpt_warn("Dropping constant coordinate(s) ",
+           paste(colnames(X)[flat], collapse = ", "), " before running `",
+           method, "`: a flat coordinate carries no changepoint information ",
+            "and ", "makes the engine's standardised statistics undefined.",
+           class = "dropped_input")
   X[, !flat, drop = FALSE]
 }
 
@@ -439,13 +480,13 @@ as_mv_matrix <- function(x, arg = "x") {
   # `new_obs` or `series` rather than `x`, and naming `x` sends the reader
   # looking for an argument the function they called does not have.
   if (is.null(x) || length(x) == 0L) {
-    stop("`", arg, "` is empty: a multivariate series needs at least one ",
-         "column with at least 3 observations.", call. = FALSE)
+    cpt_abort("`", arg, "` is empty: a multivariate series needs at least one ",
+              "column with at least 3 observations.", class = "short_series")
   }
   X <- as.matrix(x)
   if (!is.numeric(X)) {
-    stop("`", arg, "` must be numeric.", nonnumeric_columns_note(x),
-         call. = FALSE)
+    cpt_abort("`", arg, "` must be numeric.", nonnumeric_columns_note(x),
+              class = "bad_type")
   }
   if (is.null(colnames(X))) {
     colnames(X) <- paste0("V", seq_len(ncol(X)))
@@ -466,4 +507,66 @@ mv_data_wide <- function(X) {
   out <- tibble::as_tibble(as.data.frame(X, check.names = FALSE),
                            .name_repair = "minimal")
   tibble::add_column(out, index = seq_len(nrow(X)), .before = 1)
+}
+
+# Internal: the call a result records, with any bulky value inlined into it
+# replaced by a placeholder naming what it was. `do.call(cpt_detect,
+# list(x, method = "pelt"))` records the series itself as `x`, so a
+# 1,000-point fit carried a 31 KB call: `as_json(fit, data = FALSE)` still
+# wrote every value, and cpt_report() printed them all under "Call:". A
+# literal short enough to replay (a penalty, a `Q`, a window) is kept, and
+# so is anything written as a name or an expression.
+#'
+#' `do.call(cpt_detect, ...)` also puts the function itself at the head of
+#' the call, and deparsing that printed its whole source; the head becomes
+#' the function's name (`name`, or the export it is identical to).
+#' @noRd
+record_call <- function(call, name = NULL) {
+  if (!is.call(call)) return(call)
+  if (is.function(call[[1]])) {
+    call[[1]] <- as.name(name %||% function_name(call[[1]]))
+  }
+  if (length(call) < 2L) return(call)
+  args <- as.list(call)
+  for (i in seq_along(args)[-1]) {
+    v <- args[[i]]
+    if (is.null(v) || is.name(v) || is.call(v)) next
+    bulky <- if (is.atomic(v)) {
+      length(v) > 20L
+    } else {
+      !is.list(v) || is.data.frame(v) || length(v) > 20L ||
+        utils::object.size(v) > 2048
+    }
+    if (bulky) args[[i]] <- as.name(paste0("<", describe_value(v), ">"))
+  }
+  as.call(args)
+}
+
+# Internal: the exported name of a function of this package, for
+# record_call(); "<function>" for anything else.
+#' @noRd
+function_name <- function(f) {
+  # The re-running tools reach here with cpt_detect() itself, once per
+  # replicate, so that one is checked before the search.
+  if (identical(f, cpt_detect)) return("cpt_detect")
+  ns <- asNamespace("ggchangepoint")
+  for (nm in getNamespaceExports(ns)) {
+    g <- get0(nm, envir = ns, inherits = FALSE)
+    if (is.function(g) && identical(g, f)) return(nm)
+  }
+  "<function>"
+}
+
+# Internal: a short description of a value, for record_call().
+#' @noRd
+describe_value <- function(v) {
+  d <- dim(v)
+  if (length(d) == 2L) {
+    return(paste0(class(v)[1], " ", d[1], " x ", d[2]))
+  }
+  if (is.function(v)) return("function")
+  if (is.atomic(v) || is.list(v)) {
+    return(paste0(class(v)[1], "[", length(v), "]"))
+  }
+  class(v)[1]
 }

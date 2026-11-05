@@ -75,25 +75,32 @@ cpt_influence <- function(object, type = c("delete", "outlier"),
                                      "recompute"),
                           subset = NULL, outlier_sd = 5, seed = NULL, ...) {
   if (!is_ggcpt(object)) {
-    stop("`object` must be a ggcpt object.", call. = FALSE)
+    cpt_abort("`object` must be a ggcpt object.", class = "bad_argument")
   }
-  type <- match.arg(type)
-  engine <- match.arg(engine)
+  type <- cpt_match_arg(type)
+  engine <- cpt_match_arg(engine)
   validate_scalar(outlier_sd, "outlier_sd", min = 0)
 
   y <- object$data$value
   n <- length(y)
   if (n < 4) {
-    stop("Influence diagnostics need at least 4 observations; the series ",
-         "has ", n, ".", call. = FALSE)
+    cpt_abort("Influence diagnostics need at least 4 observations; the series ",
+              "has ", n, ".", class = "short_series")
   }
   if (is.null(subset)) {
     subset <- seq_len(n)
   } else {
+    # Checked before the coercion, which turned Inf or text into NA that
+    # sort() then dropped: the run failed with "could not be re-run on any
+    # of the 0 perturbed series".
+    if (!is.numeric(subset) || !length(subset) || any(!is.finite(subset))) {
+      cpt_abort("`subset` must be one or more observation positions (1..", n,
+                ").", class = "bad_argument")
+    }
     subset <- sort(unique(as.integer(subset)))
     if (any(subset < 1 | subset > n)) {
-      stop("`subset` must index observations of the series (1..", n, ").",
-           call. = FALSE)
+      cpt_abort("`subset` must index observations of the series (1..", n, ").",
+                class = "bad_argument")
     }
   }
 
@@ -105,14 +112,22 @@ cpt_influence <- function(object, type = c("delete", "outlier"),
   mean_cpt <- inherits(object$fit, "cpt") && identical(
     tryCatch(changepoint::cpttype(object$fit), error = function(e) NA),
     "mean")
-  can_native <- mean_cpt &&
+  # changepoint.influence re-fits `object$fit`, the engine's own object.
+  # For a fit with gaps that object was fitted on the compacted series (its
+  # rows did not line up with the result's, and the arithmetic recycled),
+  # and for a `fixed`, `within` or `min_effect` fit it is not the model the
+  # result reports, so those are recomputed instead.
+  constrained <- length(setdiff(names(rerun_constraints(object)),
+                                "min_segment")) > 0L
+  can_native <- mean_cpt && !constrained &&
     requireNamespace("changepoint.influence", quietly = TRUE)
   if (engine == "changepoint.influence" && !can_native) {
-    stop("`engine = \"changepoint.influence\"` needs a change-in-mean result ",
-         "from a changepoint-package engine (pelt, binseg, segneigh, amoc), ",
-         "which is all that package supports, and the ",
-         "changepoint.influence package installed. `engine = \"recompute\"` ",
-         "works for every method.", call. = FALSE)
+    cpt_abort("`engine = \"changepoint.influence\"` needs a change-in-mean ",
+               "result ", "from a changepoint-package engine (pelt, binseg, ",
+               "segneigh, amoc), ", "which is all that package supports, and ",
+               "the ", "changepoint.influence package installed. `engine = ",
+               "\"recompute\"` ", "works for every method.",
+              class = "unsupported")
   }
   # Only a DELETION goes to changepoint.influence under "auto". The two
   # engines agree on what deleting an observation means; they do not agree
@@ -124,10 +139,10 @@ cpt_influence <- function(object, type = c("delete", "outlier"),
     engine == "changepoint.influence"
 
   if (!use_native && length(subset) > 500) {
-    warning("Recomputing influence perturbs one observation at a time, so ",
-            "this is ", length(subset), " detector fits. Pass `subset` to ",
-            "sample positions, or set a parallel `future::plan()`.",
-            call. = FALSE)
+    cpt_warn("Recomputing influence perturbs one observation at a time, so ",
+             "this is ", length(subset), " detector fits. Pass `subset` to ",
+             "sample positions, or set a parallel `future::plan()`.",
+             class = "warning")
   }
 
   local_seed(seed)
@@ -209,28 +224,40 @@ influence_recompute <- function(object, type, subset, outlier_sd, seed = NULL,
   #
   # Now also its penalty, a change type cpt_detect() can be asked for, and
   # a refusal for a multivariate result: see rerun_dots().
+  refuse_unrerunnable(object, "cpt_influence()")
   dots <- rerun_dots(object, list(...), "cpt_influence()")
   orig_cp <- object$changepoints$cp
-  fitted_step <- rep(object$segments$param_estimate, times = object$segments$n)
-  orig_param <- fitted_step
-  resid_sd <- stats::sd(y - fitted_step)
-  if (!is.finite(resid_sd) || resid_sd == 0) resid_sd <- stats::sd(y)
+  orig_param <- rep(object$segments$param_estimate,
+                    times = object$segments$n)
+  # An outlier is placed against the fitted signal, in the residuals' own
+  # spread: against segment means, a slope fit's "outlier" sat off the
+  # segment's average by the trend's spread, not the noise's.
+  fitted_step <- resampling_signal(object)
+  resid_sd <- stats::sd(y - fitted_step, na.rm = TRUE)
+  if (!is.finite(resid_sd) || resid_sd == 0) resid_sd <- stats::sd(y, na.rm = TRUE)
   if (!is.finite(resid_sd) || resid_sd == 0) resid_sd <- 1
+  # A missing observation has nothing to delete or to replace with an
+  # outlier, so a fit with gaps is perturbed at its observed positions.
+  subset <- subset[!is.na(y[subset])]
 
   has_future <- requireNamespace("future", quietly = TRUE) &&
     requireNamespace("future.apply", quietly = TRUE) &&
     !inherits(future::plan(), "sequential")
 
   run_one <- function(i) {
+    dots_i <- dots
     if (type == "delete") {
       pert <- y[-i]
+      # Positions after the deleted one move down by one, and so do a
+      # fixed changepoint and a window bound.
+      dots_i <- map_rerun_positions(dots, function(p) p - (p >= i), n - 1L)
     } else {
       pert <- y
       pert[i] <- fitted_step[i] + outlier_sd * resid_sd
     }
     err <- NULL
     fit <- tryCatch(do.call(cpt_detect,
-                            c(list(pert, method = method), dots)),
+                            c(list(pert, method = method), dots_i)),
                     error = function(e) {
                       err <<- conditionMessage(e)
                       NULL
@@ -256,7 +283,7 @@ influence_recompute <- function(object, type, subset, outlier_sd, seed = NULL,
     list(cp = cp, param = par_i)
   }
 
-  outs <- if (has_future) {
+  outs <- once_per_kind(if (has_future) {
     future.apply::future_lapply(subset, with_session_registry(run_one),
                                 # `seed %||% TRUE`, as the other three
                                 # parallel call sites do. local_seed(seed)
@@ -270,7 +297,7 @@ influence_recompute <- function(object, type, subset, outlier_sd, seed = NULL,
                                 future.seed = seed %||% TRUE)
   } else {
     lapply(subset, run_one)
-  }
+  })
 
   cpts <- lapply(outs, function(o) o$cp)
   param_mat <- do.call(rbind, lapply(outs, function(o) o$param))
@@ -281,14 +308,14 @@ influence_recompute <- function(object, type, subset, outlier_sd, seed = NULL,
   errs <- vapply(outs, function(o) o$error %||% NA_character_, character(1))
   failed <- !is.na(errs)
   if (all(failed)) {
-    stop("The detector could not be re-run on any of the ", length(failed),
-         " perturbed series, so there is no influence to report. The first ",
-         "error was: ", errs[failed][1], call. = FALSE)
+    cpt_abort("The detector could not be re-run on any of the ", length(failed),
+              " perturbed series, so there is no influence to report. The first ",
+              "error was: ", errs[failed][1], class = "engine_error")
   }
   if (any(failed)) {
-    warning("The detector failed on ", sum(failed), " of ", length(failed),
-            " perturbed series; those rows have `n_cp = NA`. The first error ",
-            "was: ", errs[failed][1], call. = FALSE)
+    cpt_warn("The detector failed on ", sum(failed), " of ", length(failed),
+             " perturbed series; those rows have `n_cp = NA`. The first error ",
+             "was: ", errs[failed][1], class = "replicates_failed")
   }
   summarise_influence(cpts, param_mat, orig_cp, orig_param, subset,
                       failed = failed)
@@ -393,7 +420,8 @@ print.ggcpt_influence <- function(x, ...) {
 cpt_leverage <- function(object, ...) {
   if (is_ggcpt(object)) object <- cpt_influence(object, ...)
   if (!inherits(object, "ggcpt_influence")) {
-    stop("`object` must be a ggcpt_influence or ggcpt object.", call. = FALSE)
+    cpt_abort("`object` must be a ggcpt_influence or ggcpt object.",
+              class = "bad_argument")
   }
   inf <- object$influence
   z <- function(v) {
@@ -452,7 +480,7 @@ autoplot.ggcpt_influence <- function(object,
                                      plot_type = c("overview", "location",
                                                    "parameter", "map"),
                                      ...) {
-  plot_type <- match.arg(plot_type)
+  plot_type <- cpt_match_arg(plot_type)
   inf <- object$influence
   orig <- object$original
   orig_cp <- orig$changepoints$cp
@@ -496,8 +524,9 @@ autoplot.ggcpt_influence <- function(object,
       tibble::tibble(perturbed = inf$index[i], cp = v)
     }))
     if (is.null(rows)) {
-      stop("No perturbation produced a changepoint, so there is nothing to ",
-           "draw. Try plot_type = \"parameter\".", call. = FALSE)
+      cpt_abort("No perturbation produced a changepoint, so there is nothing ",
+                 "to ", "draw. Try plot_type = \"parameter\".",
+                class = "input_error")
     }
     rows$perturbed_x <- idx_vals[rows$perturbed]
     rows$cp_x <- idx_vals[rows$cp]
@@ -596,19 +625,27 @@ cpt_sensitivity <- function(x, method = "pelt", over = list(), seed = NULL,
   # rerun_dots().
   dots_ci <- list(...)
   if (is_ggcpt(x)) {
+    refuse_unrerunnable(x, "cpt_sensitivity()")
     method <- x$method
-    user_pen <- !is.null(dots_ci[["penalty", exact = TRUE]])
+    user_args <- names(dots_ci)
     dots_ci <- rerun_dots(x, dots_ci, "cpt_sensitivity()")
-    if (!user_pen && "penalty" %in% names(over)) dots_ci$penalty <- NULL
+    # What the grid sweeps is not also replayed from the fit (the penalty,
+    # a `min_segment`, ...): passed twice, every setting failed with
+    # "formal argument matched by multiple actual arguments".
+    if (is.list(over)) {
+      for (nm in setdiff(intersect(names(over), names(dots_ci)), user_args)) {
+        dots_ci[[nm]] <- NULL
+      }
+    }
     series <- x$data$value
   } else {
-    validate_data(x)
+    validate_for_detect(x, dots_ci)
     series <- as_uni_vector(x, method)
   }
   if (!is.list(over) || length(over) == 0 || is.null(names(over)) ||
       any(!nzchar(names(over)))) {
-    stop("`over` must be a non-empty named list of parameter vectors, e.g. ",
-         "list(penalty = c(5, 10, 20)).", call. = FALSE)
+    cpt_abort("`over` must be a non-empty named list of parameter vectors, ",
+               "e.g. ", "list(penalty = c(5, 10, 20)).", class = "bad_argument")
   }
   grid <- expand.grid(over, stringsAsFactors = FALSE,
                       KEEP.OUT.ATTRS = FALSE)
@@ -630,7 +667,7 @@ cpt_sensitivity <- function(x, method = "pelt", over = list(), seed = NULL,
     list(cpts = fit$changepoints$cp, error = NA_character_)
   }
 
-  outs <- if (has_future) {
+  outs <- once_per_kind(if (has_future) {
     future.apply::future_lapply(seq_len(nrow(grid)),
                                 with_session_registry(run_one),
                                 # `seed %||% TRUE`, as the other three
@@ -645,16 +682,16 @@ cpt_sensitivity <- function(x, method = "pelt", over = list(), seed = NULL,
                                 future.seed = seed %||% TRUE)
   } else {
     lapply(seq_len(nrow(grid)), run_one)
-  }
+  })
 
   grid <- tibble::as_tibble(grid)
   grid$n_cp <- vapply(outs, function(o) length(o$cpts), integer(1))
   grid$cpts <- lapply(outs, function(o) o$cpts)
   grid$error <- vapply(outs, function(o) o$error, character(1))
   if (any(!is.na(grid$error))) {
-    warning(sum(!is.na(grid$error)), " of ", nrow(grid),
-            " settings errored; their rows report 0 changepoints and carry ",
-            "the message in the `error` column.", call. = FALSE)
+    cpt_warn(sum(!is.na(grid$error)), " of ", nrow(grid), " settings errored; ",
+              "their rows report 0 changepoints and carry ", "the message in ",
+              "the `error` column.", class = "replicates_failed")
   }
 
   structure(

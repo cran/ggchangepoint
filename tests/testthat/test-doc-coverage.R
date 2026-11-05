@@ -1,43 +1,41 @@
-test_that("all exported functions appear in README", {
+test_that("every documented topic is in the pkgdown reference index", {
   skip_on_cran()
+  skip_if_no_sources()
+  # Until 0.6.0 this asked for every export in the README, which made the
+  # README a 1,200-line index. The reference page is the index; the README
+  # is the first five minutes. pkgdown refuses to build a site whose index
+  # misses a topic, so this is the same check, run before the site build.
+  yml <- pkg_source_lines("_pkgdown.yml")
+  listed <- trimws(sub("^\\s*-\\s*", "", grep("^\\s+-\\s+[A-Za-z.]",
+                                                 yml, value = TRUE)))
+  rd_files <- list.files(file.path(pkg_source_root(), "man"), "\\.Rd$",
+                         full.names = TRUE)
+  field <- function(lines, tag) {
+    hits <- regmatches(lines, regexpr(paste0("^\\\\", tag, "\\{[^}]*\\}"),
+                                      lines))
+    sub(paste0("^\\\\", tag, "\\{(.*)\\}$"), "\\1", hits)
+  }
+  rds <- lapply(rd_files, readLines, warn = FALSE)
+  internal <- vapply(rds, function(l) "internal" %in% field(l, "keyword"),
+                     logical(1))
+  topics <- vapply(rds[!internal], function(l) field(l, "name")[1],
+                   character(1))
+  aliases <- lapply(rds[!internal], field, tag = "alias")
+  covered <- vapply(seq_along(topics), function(i) {
+    any(c(topics[i], aliases[[i]]) %in% listed)
+  }, logical(1))
+  expect_equal(unname(topics[!covered]), character(0))
+})
 
-  ns_path <- system.file("NAMESPACE", package = "ggchangepoint")
-  ns_lines <- readLines(ns_path)
-  exports <- gsub("^export\\(([^)]+)\\)$", "\\1", grep("^export\\(", ns_lines, value = TRUE))
-
-  readme_paths <- c(
-    file.path("..", "..", "README.md"),
-    "README.md"
-  )
+test_that("the README shows the core verbs", {
+  skip_on_cran()
+  readme_paths <- c(file.path("..", "..", "README.md"), "README.md")
   readme_path <- readme_paths[file.exists(readme_paths)][1]
   if (is.na(readme_path)) skip("README.md not found")
-  readme <- readLines(readme_path)
-
-  missing <- character()
-  for (ex in exports) {
-    # For S3 methods (e.g. summary.ggcpt), also check the generic name (summary)
-    search_names <- c(ex, sub("\\..*$", "", ex))
-    backtick_call <- any(vapply(search_names, function(n) {
-      any(grepl(sprintf("`%s(", n), readme, fixed = TRUE))
-    }, logical(1)))
-    backtick_name <- any(vapply(search_names, function(n) {
-      any(grepl(sprintf("`%s`", n), readme, fixed = TRUE))
-    }, logical(1)))
-    bare_call <- any(vapply(search_names, function(n) {
-      any(grepl(sprintf("%s(", n), readme, fixed = TRUE))
-    }, logical(1)))
-    in_readme <- backtick_call || backtick_name || bare_call
-    if (!in_readme) missing <- c(missing, ex)
-  }
-
-  if (length(missing) > 0) {
-    fail(paste(
-      sprintf("Exports missing from README (%d):", length(missing)),
-      paste(missing, collapse = ", "),
-      sep = "\n"
-    ))
-  } else {
-    succeed()
+  readme <- paste(readLines(readme_path), collapse = "\n")
+  for (fn in c("cpt_detect", "autoplot", "cpt_methods", "cpt_recommend",
+               "cpt_effect", "cpt_assumptions")) {
+    expect_match(readme, paste0(fn, "("), fixed = TRUE, info = fn)
   }
 })
 
@@ -514,7 +512,12 @@ test_that("the 0.5.0 method count agrees across registry, NEWS and the tour", {
     if (is.na(h)) return(NA_integer_)
     as.integer(sub(pat, "\\1", h))
   }
-  reached  <- grab(".*reaches ([0-9]+) wired methods.*")
+  # Every total NEWS has reported, newest first: the newest is the live
+  # count, and 0.5.0's is the one its engine wave adds up to.
+  reach_pat <- ".*reaches ([0-9]+) wired methods.*"
+  totals <- as.integer(sub(reach_pat, "\\1",
+                           grep(reach_pat, news, value = TRUE)))
+  reached  <- totals[1]
   baseline <- grab(".*from 13 to ([0-9]+) wired methods.*")
   # Any separator between "#2" and the count: the heading has been written
   # with a dash and with a colon, and the count is the part that matters.
@@ -522,7 +525,7 @@ test_that("the 0.5.0 method count agrees across registry, NEWS and the tour", {
   expect_false(anyNA(c(reached, baseline, delta)))
 
   expect_identical(reached, live)
-  expect_identical(baseline + delta, live)
+  expect_true((baseline + delta) %in% totals)
 
   # the tour's number word, and the noun it attaches to
   words <- c("Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
@@ -1313,7 +1316,7 @@ test_that("the `online` flag and cpt_monitor()'s methods are distinct sets", {
   monitor <- sort(eval(formals(cpt_monitor)$method))
 
   expect_setequal(online, c("bocpd", "cpm", "ocd"))
-  expect_setequal(monitor, c("cpm", "edetector", "ocd"))
+  expect_setequal(monitor, c("cpm", "cusum", "edetector", "ewma", "ocd"))
   expect_setequal(eval(formals(cpt_replay)$method), monitor)
 
   # the two facts the help now asserts
@@ -1322,8 +1325,10 @@ test_that("the `online` flag and cpt_monitor()'s methods are distinct sets", {
 
   # ... and that they are really unreachable that way, rather than merely
   # absent from a default
-  expect_error(cpt_monitor("bocpd", baseline = stats::rnorm(60)), "should be one of")
-  expect_error(cpt_detect(stats::rnorm(60), method = "edetector"), "should be one of")
+  expect_error(cpt_monitor("bocpd", baseline = stats::rnorm(60)),
+               class = "ggchangepoint_bad_argument")
+  expect_error(cpt_detect(stats::rnorm(60), method = "edetector"),
+               class = "ggchangepoint_unknown_method")
 
   # an online engine is still usable in batch, which is what the flag means
   skip_if_not_installed("ocp")
@@ -1507,7 +1512,9 @@ test_that("every shipped figure is referenced by something", {
   if (!dir.exists(figdir)) skip("man/figures not available")
 
   have <- list.files(figdir)
-  expect_gt(length(have), 5L)          # the check must have found the figures
+  # The check must have found the figures: the logo and the README's plot
+  # at least (0.6.0's README has one; 0.5.0's had twenty-three).
+  expect_true(all(c("logo.png", "README-nile-1.png") %in% have))
 
   # anything referenced from any source the package ships or builds from
   srcs <- c(list.files(root, "\\.(md|Rmd)$", full.names = TRUE),
